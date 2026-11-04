@@ -1,0 +1,53 @@
+# Runs on every pull request and push to main. Vercel deploys separately
+# (Git integration); protect `main` so it only merges when this passes.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Real-PostgreSQL tests (concurrency, RLS sweep). Disposable CI database only.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm test
+      - name: Build without secrets
+        run: npm run build
+      - name: Migrations apply cleanly, one transaction per file
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "create database migrate_check"
+          psql -h localhost -U postgres -d migrate_check -v ON_ERROR_STOP=1 -q -f tests/support/supabase-stubs.sql
+          for f in supabase/migrations/*.sql; do
+            psql -h localhost -U postgres -d migrate_check -v ON_ERROR_STOP=1 -q --single-transaction -f "$f"
+          done
+          psql -h localhost -U postgres -d migrate_check -v ON_ERROR_STOP=1 -f scripts/verify-database.sql

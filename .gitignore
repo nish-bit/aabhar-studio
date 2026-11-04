@@ -1,0 +1,29 @@
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Build files
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local tools
+.vercel/
+.DS_Store
+
+# Supabase local temporary files
+supabase/.temp/
