@@ -59,6 +59,11 @@ async function call(file: string, method: string, url: string, body?: unknown, h
   return res;
 }
 
+// These tests import every admin and customer route module (billing pulls in the
+// PDF pipeline, which Vitest transforms), so the first import is slow when the
+// whole suite runs in parallel. That's import cost, not a hang: allow for it.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 beforeAll(async () => {
   ({ pg, db } = await createTestDatabase());
   session.db = db;

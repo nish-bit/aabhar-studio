@@ -162,7 +162,7 @@ describe("credit packs", () => {
     const order = await createPackOrder(deps, user, { packId: "solo", idempotencyKey: randomUUID() });
     const { checkout } = gateway.payOrder(order.orderId, { status: "failed" });
     const r = await verifyPackPayment(deps, user.id, checkout);
-    expect(r.status).toBe("pending");
+    expect(r).toMatchObject({ status: "failed", creditsGranted: 0 }); // Razorpay confirmed the failure
     expect(await balance()).toBe(2);
   });
 
@@ -510,7 +510,9 @@ describe("receipts", () => {
     expect(a.receiptNumber).toMatch(/^AS\/\d{4}-\d{2}\/000001$/);
     expect(b.receiptNumber).toBe(a.receiptNumber);
     expect(a.mode).toBe("test");
-    expect(JSON.stringify(a)).not.toMatch(/card_|\b\d{12,19}\b/); // no card data anywhere
+    // No card data anywhere. UUIDs are masked first: their last group can be 12 digits by chance.
+    const receiptJson = JSON.stringify(a).replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<uuid>");
+    expect(receiptJson).not.toMatch(/card_|\b\d{12,19}\b/);
 
     const other = await createUser(pg);
     await expectCode(getReceiptData(deps, other.userId, paymentId), "not_found");

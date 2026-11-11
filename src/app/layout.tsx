@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 
 import { MotionProvider } from "@/components/motion/motion-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { OG_IMAGE, SITE_NAME, SITE_URL } from "@/lib/site";
 
 import "./globals.css";
 
@@ -25,14 +26,18 @@ const cormorant = localFont({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Aabhar Studio — AI jewellery photography and catalogues",
     template: "%s · Aabhar Studio",
   },
   description:
     "Turn phone photos of jewellery into clean, consistent product images and build catalogues for your shop, brand or wholesale buyers.",
-  // Preview build: keep out of search engines until launch.
-  robots: { index: false, follow: false },
+  applicationName: SITE_NAME,
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large" } },
+  // Defaults for pages without their own; public pages set full cards via pageMetadata().
+  openGraph: { type: "website", siteName: SITE_NAME, locale: "en_IN", images: [OG_IMAGE] },
+  twitter: { card: "summary_large_image", images: [OG_IMAGE.url] },
 };
 
 export const viewport: Viewport = {

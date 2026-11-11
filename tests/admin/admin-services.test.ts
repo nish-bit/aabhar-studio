@@ -172,7 +172,7 @@ describe("customer privacy in admin views", () => {
     await pg.query(
       `insert into public.billing_webhook_events (event_id, event_type, mode, payload)
        values ('evt_priv', 'payment.captured', 'test', $1::jsonb)`,
-      [JSON.stringify({ payload: { payment: { entity: { id: "pay_X1", amount: 59900, status: "captured", email: "customer@private.test", contact: "+919999999999", card: { last4: "4242" } } } } })],
+      [JSON.stringify({ payload: { payment: { entity: { id: "pay_X1", amount: 59900, status: "captured", email: "customer@private.test", contact: "+919999999999", card: { last4: "4242", issuer: "PRIVATE-CARD-ISSUER" } } } } })],
     );
     const outputs = JSON.stringify([
       await getJobDetail(deps, admin, jobId),
@@ -181,7 +181,9 @@ describe("customer privacy in admin views", () => {
       await listWebhookEvents(deps, admin, { q: "evt_priv" }),
       await errorSummary(deps, admin),
     ]);
-    for (const secret of ["PRIVATE-NOTE", "private-ring.jpg", "source.jpg", "upload.jpg", "customer@private.test", "+919999999999", "4242", "storage", "signedUrl"]) {
+    // Card data is checked by its field name and a unique marker: bare digits like "4242" also occur by
+    // chance inside the random UUIDs and timestamps in these outputs, which made this test flaky.
+    for (const secret of ["PRIVATE-NOTE", "private-ring.jpg", "source.jpg", "upload.jpg", "customer@private.test", "+919999999999", "last4", "PRIVATE-CARD-ISSUER", "storage", "signedUrl"]) {
       expect(outputs).not.toContain(secret);
     }
     const job = await getJobDetail(deps, admin, jobId);

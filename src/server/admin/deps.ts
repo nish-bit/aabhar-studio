@@ -4,6 +4,7 @@ import { revalidateTag } from "next/cache";
 import { after } from "next/server";
 
 import { billingConfigState } from "@/server/billing/config";
+import { invalidatePublicPricingCache } from "@/server/billing/public-pricing";
 import { database } from "@/server/db/postgres";
 import { supabaseAdmin } from "@/server/db/supabase-admin";
 import { generationDeps } from "@/server/generation/deps";
@@ -36,6 +37,10 @@ export function adminDeps(): AdminDeps {
     providerConfigured: provider !== null,
     provider: provider ? { id: provider.id, model: provider.model } : null,
     billingMode: billingConfigState().availability.mode,
-    revalidatePlans: () => revalidateTag(PLANS_CACHE_TAG, "max"),
+    revalidatePlans: () => {
+      revalidateTag(PLANS_CACHE_TAG, "max");
+      // Public pricing keeps a short in-memory cache per server instance; drop this instance's copy now.
+      invalidatePublicPricingCache();
+    },
   };
 }

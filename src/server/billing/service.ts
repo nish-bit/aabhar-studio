@@ -243,6 +243,34 @@ async function applyPackPayment(deps: BillingDeps, order: OrderRow, payment: Gat
   });
 }
 
+/** Thrown before the webhook transaction when Razorpay's state can't be established; the event is retried, never marked processed. */
+class PaymentStateUncertain extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PaymentStateUncertain";
+  }
+}
+
+const matchesOrder = (order: OrderRow, p: GatewayPayment) => p.order_id === order.razorpayOrderId && p.amount === order.amountPaise && p.currency === "INR";
+
+/**
+ * For an authorized payment that matches our order: ask Razorpay to capture it,
+ * then fetch the payment to learn what actually happened. Runs before any
+ * database transaction is opened, so no row lock or connection is held during
+ * these calls.
+ *
+ * The capture call's own result isn't trusted: it may have timed out after
+ * Razorpay captured, or failed because an earlier attempt already captured.
+ * The fetched payment is authoritative. Returns the payment unchanged when
+ * there's nothing to capture. Throws when Razorpay can't be reached (callers
+ * treat that as "not known yet", never as "not paid").
+ */
+async function captureAndConfirm(gateway: PaymentGateway, order: OrderRow, payment: GatewayPayment): Promise<GatewayPayment> {
+  if (payment.status !== "authorized" || !matchesOrder(order, payment)) return payment;
+  await gateway.capturePayment(payment.id, order.amountPaise).catch(() => undefined); // outcome checked below
+  return gateway.fetchPayment(payment.id);
+}
+
 export async function verifyPackPayment(
   deps: BillingDeps,
   userId: string,
@@ -258,22 +286,22 @@ export async function verifyPackPayment(
   }
 
   let credits = 0;
-  let confirmed = false;
+  let status: VerifyResponse["status"] = "pending";
   try {
-    let payment = await gateway.fetchPayment(input.razorpay_payment_id);
-    if (payment.status === "authorized" && payment.order_id === order.razorpayOrderId && payment.amount === order.amountPaise && payment.currency === "INR") {
-      payment = await gateway.capturePayment(payment.id, order.amountPaise);
-    }
+    // Razorpay's server-side state decides; the browser's success callback is only a claim.
+    const payment = await captureAndConfirm(gateway, order, await gateway.fetchPayment(input.razorpay_payment_id));
     const r = await applyPackPayment(deps, order, payment);
     if (r.outcome === "mismatch") throw new DomainError("payment_failed", "This payment doesn't match the order. Contact support; no credits were added.", 400);
-    confirmed = r.outcome === "granted" || r.outcome === "already_granted";
+    if (r.outcome === "granted" || r.outcome === "already_granted") status = "confirmed";
+    // Razorpay confirms the payment failed: say so (no credits). Authorized/created stay "pending".
+    else if (payment.status === "failed") status = "failed";
     credits = r.credits;
   } catch (err) {
     if (err instanceof DomainError) throw err;
     // Razorpay unreachable: the webhook (or the reconcile cron) will finish this.
     log(deps, "billing.verify_deferred", { order: order.razorpayOrderId, error: String(err) });
   }
-  return { status: confirmed ? "confirmed" : "pending", creditsGranted: credits, balance: await deps.repo.balance(m.shopId) };
+  return { status, creditsGranted: credits, balance: await deps.repo.balance(m.shopId) };
 }
 
 /* ---------------------------------------------------------- subscriptions */
@@ -521,11 +549,13 @@ export async function handleRazorpayWebhook(
   }
 
   try {
+    // Razorpay API calls happen here, before the transaction and its row lock.
+    const settledPayment = await settlePaymentBeforeTransaction(deps, env);
     const outcome = await deps.repo.withTx(async (repo) => {
       const lock = await repo.lockWebhookEvent(eventId);
       if (lock.processed) return "duplicate";
       const txDeps = { ...deps, repo };
-      const result = await processEvent(txDeps, env, createdAt);
+      const result = await processEvent(txDeps, env, createdAt, settledPayment);
       await repo.markWebhookProcessed(eventId, result);
       return result;
     });
@@ -539,8 +569,37 @@ export async function handleRazorpayWebhook(
 }
 
 const entityOf = (env: WebhookEnvelope, key: string) => env.payload?.[key]?.entity ?? null;
+const PACK_PAYMENT_EVENTS = new Set(["payment.authorized", "payment.captured", "payment.failed", "order.paid"]);
 
-async function processEvent(deps: BillingDeps, env: WebhookEnvelope, eventAt: Date | null): Promise<string> {
+/**
+ * For pack payment events whose payment is only authorized: capture it and
+ * fetch its real state now, outside the transaction (see captureAndConfirm).
+ * Returns that payment for processEvent, or null when nothing needs Razorpay.
+ * Throws PaymentStateUncertain (-> 500, Razorpay retries, event not marked
+ * processed) if the payment is still authorized afterwards or Razorpay can't
+ * be reached.
+ */
+async function settlePaymentBeforeTransaction(deps: BillingDeps, env: WebhookEnvelope): Promise<GatewayPayment | null> {
+  if (!PACK_PAYMENT_EVENTS.has(env.event)) return null;
+  const entity = entityOf(env, "payment");
+  if (!entity) return null;
+  const payment = normalizePayment(entity);
+  if (payment.status !== "authorized" || !deps.gateway || !payment.order_id) return null;
+  const order = await deps.repo.orderByRazorpayId(payment.order_id);
+  if (!order || !matchesOrder(order, payment)) return null; // not ours, or a mismatch processEvent records without capturing
+  let settled: GatewayPayment;
+  try {
+    settled = await captureAndConfirm(deps.gateway, order, payment);
+  } catch (err) {
+    throw new PaymentStateUncertain(`couldn't confirm payment ${payment.id} with Razorpay: ${String(err).slice(0, 200)}`);
+  }
+  if (settled.id !== payment.id || settled.status === "authorized") {
+    throw new PaymentStateUncertain(`payment ${payment.id} is still ${settled.status} after capture`);
+  }
+  return settled;
+}
+
+async function processEvent(deps: BillingDeps, env: WebhookEnvelope, eventAt: Date | null, settledPayment: GatewayPayment | null = null): Promise<string> {
   const paymentEntity = entityOf(env, "payment");
   const subEntity = entityOf(env, "subscription");
   const refundEntity = entityOf(env, "refund");
@@ -551,13 +610,11 @@ async function processEvent(deps: BillingDeps, env: WebhookEnvelope, eventAt: Da
     case "payment.failed":
     case "order.paid": {
       if (!paymentEntity) return "no_payment";
-      let payment = normalizePayment(paymentEntity);
+      // An authorized payment was already captured and re-fetched before the transaction (no network calls in here).
+      const payment = settledPayment ?? normalizePayment(paymentEntity);
       const order = payment.order_id ? await deps.repo.orderByRazorpayId(payment.order_id) : null;
       if (!order) return "ignored_not_pack"; // subscription payments are handled by subscription.* events
-      if (payment.status === "authorized" && deps.gateway && payment.amount === order.amountPaise) {
-        // Orders are created with automatic capture; capture explicitly if the account doesn't auto-capture.
-        payment = await deps.gateway.capturePayment(payment.id, order.amountPaise).catch(() => payment);
-      }
+      // applyPackPayment re-checks status, order, amount and currency before any credits.
       return `pack_${(await applyPackPayment(deps, order, payment)).outcome}`;
     }
 

@@ -13,6 +13,8 @@ import { parseArgs } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 
+import { postgresSsl } from "../src/server/db/ssl";
+
 import { requireAdmin } from "@/server/admin/guard";
 import type { Db, SqlParam } from "@/server/db/sql";
 import { SupabaseObjectStorage } from "@/server/generation/supabase-storage";
@@ -30,7 +32,7 @@ async function main() {
   if (!email || !adminEmail || !reason) throw new Error("Usage: --email <customer> --admin <your admin email> --reason <text> [--apply]");
   if (!url || !supaUrl || !key) throw new Error("DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY are required.");
 
-  const sql = postgres(url, { prepare: false, max: 1, ssl: url.includes("localhost") || url.includes("127.0.0.1") ? false : "require" });
+  const sql = postgres(url, { prepare: false, max: 1, ssl: postgresSsl(url) });
   const wrap = (c: postgres.Sql | postgres.TransactionSql): Db => ({
     query: async <T,>(text: string, params: SqlParam[] = []) => (await c.unsafe(text, params as never[])) as unknown as T[],
     transaction: async <T,>(fn: (tx: Db) => Promise<T>) => ("savepoint" in c ? fn(wrap(c)) : ((await (c as postgres.Sql).begin((tx) => fn(wrap(tx)))) as T)),

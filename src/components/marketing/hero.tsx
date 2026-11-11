@@ -4,7 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { BeforeAfter } from "@/components/shared/before-after";
 import { Container } from "@/components/shared/container";
-import { Display, Lead, Overline } from "@/components/shared/typography";
+import { Display, Lead } from "@/components/shared/typography";
 import { Button } from "@/components/ui/button";
 import type { BeforeAfterPair } from "@/types/content";
 
@@ -25,9 +25,11 @@ export function Hero({ overline, title, subtitle, primaryCta, secondaryCta, trus
         <div className="grid items-center gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-5">
             <Reveal>
-              <Overline>{overline}</Overline>
-              <Display as="h1" id="hero-title" size="2xl" className="mt-5">
-                {title}
+              {/* The overline is part of the H1 so the heading says what the product is; it looks the same as before. */}
+              <Display as="h1" id="hero-title" size="2xl">
+                <span className="block font-sans text-overline font-semibold uppercase tracking-[0.12em] text-gold-700">{overline}</span>
+                <span className="sr-only">: </span>
+                <span className="mt-5 block">{title}</span>
               </Display>
               <Lead className="mt-6 max-w-md">{subtitle}</Lead>
               <div id="hero-cta" className="mt-8 flex flex-col gap-3 sm:flex-row">

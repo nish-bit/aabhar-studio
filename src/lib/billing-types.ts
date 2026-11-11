@@ -160,7 +160,8 @@ export interface VerifySubscriptionRequest {
  * confirmed capture yet; the webhook will finish it.
  */
 export interface VerifyResponse {
-  status: "confirmed" | "pending";
+  /** confirmed: credits added (or already were) · pending: Razorpay hasn't confirmed yet · failed: Razorpay says the payment failed */
+  status: "confirmed" | "pending" | "failed";
   creditsGranted: number;
   balance: number;
 }

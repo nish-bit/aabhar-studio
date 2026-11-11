@@ -1,8 +1,15 @@
 import type { Metadata } from "next";
 
 import { Fill, LegalPage } from "@/components/marketing/legal-page";
+import { JsonLd } from "@/components/seo/json-ld";
+import { pageMetadata } from "@/lib/site";
+import { breadcrumbSchema, graph } from "@/lib/structured-data";
 
-export const metadata: Metadata = { title: "Refund and cancellation policy" };
+export const metadata: Metadata = pageMetadata({
+  title: "Refund and cancellation policy",
+  description: "Aabhar Studio's refund and cancellation policy for credit purchases, failed generations and refunded credits.",
+  path: "/legal/refunds",
+});
 
 const SUPPORT_EMAIL = "aabharstudio@gmail.com";
 
@@ -19,6 +26,7 @@ export default function RefundsPage() {
   );
   return (
     <LegalPage title="Refund and cancellation policy" updated="November 2026 (draft, pending business approval and legal review)">
+      <JsonLd data={graph(breadcrumbSchema("Refund and cancellation policy", "/legal/refunds"))} />
       <p>
         Welcome to Aabhar Studio. This policy explains how subscription cancellations, failed image generations, and payment refunds are
         handled.

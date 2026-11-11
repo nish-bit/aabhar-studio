@@ -148,11 +148,13 @@ describe.skipIf(!REAL_PG_URL)("concurrency on real PostgreSQL", () => {
       const ctx = await requireAdmin(env.db, { id: a.userId, email: null }, "write");
       const deps = { db: env.db, providerConfigured: true, provider: { id: "openai", model: "m" }, billingMode: "test" as const, startJob: () => undefined };
       const u = await realUser(env.sql);
+      // Start from the shop's real sign-up allowance (the trial size is configurable; it was 10, now 2).
+      const start = await invariant(u.shopId);
       const key = randomUUID();
       await Promise.allSettled(
         Array.from({ length: 10 }, () => grantPromoCredits(deps, ctx, { shopId: u.shopId, amount: 7, expiresInDays: null, reason: "parallel grant test", idempotencyKey: key })),
       );
-      expect(await invariant(u.shopId)).toBe(17);
+      expect(await invariant(u.shopId)).toBe(start + 7); // granted exactly once
 
       const src = await realSource(env.sql, u.shopId, u.userId);
       const [job] = await createJob(u, src);
@@ -162,7 +164,7 @@ describe.skipIf(!REAL_PG_URL)("concurrency on real PostgreSQL", () => {
       expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
       const [{ n }] = await env.sql<{ n: number }[]>`select count(*)::int as n from public.generation_jobs where idempotency_key = ${`admin-retry:${job!.r_job_id}`}`;
       expect(n).toBe(1);
-      expect(await invariant(u.shopId)).toBe(16);
+      expect(await invariant(u.shopId)).toBe(start + 7 - 1); // the retried job charged once
     });
   });
 });

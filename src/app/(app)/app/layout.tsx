@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -7,6 +8,9 @@ import { AppNav, AppNavFallback } from "@/components/app/app-nav";
 import { brand } from "@/content/marketing";
 import { isAccountDisabled } from "@/server/auth/account-status";
 import { getSessionUser } from "@/server/auth/session";
+
+/** Signed-in pages are private: never index them. */
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 export default function AppLayout({
   children,

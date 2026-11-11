@@ -2,8 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Fill, LegalPage } from "@/components/marketing/legal-page";
+import { JsonLd } from "@/components/seo/json-ld";
+import { pageMetadata } from "@/lib/site";
+import { breadcrumbSchema, graph } from "@/lib/structured-data";
 
-export const metadata: Metadata = { title: "Terms and conditions" };
+export const metadata: Metadata = pageMetadata({
+  title: "Terms and conditions",
+  description: "The terms for using Aabhar Studio's AI jewellery photography and catalogue service, including credits, payments and content ownership.",
+  path: "/legal/terms",
+});
 
 const SUPPORT_EMAIL = "aabharstudio@gmail.com";
 
@@ -60,6 +67,7 @@ export default function TermsPage() {
 
   return (
     <LegalPage title="Terms and conditions" updated="1 November 2026 (draft, subject to legal review and business approval)">
+      <JsonLd data={graph(breadcrumbSchema("Terms and conditions", "/legal/terms"))} />
       <p>
         These Terms &amp; Conditions (&ldquo;Terms&rdquo;) govern your access to and use of Aabhar Studio (&ldquo;Service&rdquo;), operated by
         Aabhar Studio (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;).

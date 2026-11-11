@@ -1,4 +1,6 @@
 /* eslint-disable jsx-a11y/alt-text -- react-pdf <Image> has no alt prop; the PDF carries text labels instead. */
+// Must load before react-pdf opens any document (registers pdfkit's built-in fonts).
+import "@/server/pdf/pdfkit-standard-fonts";
 import { Document, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
 import { formatPricePaise, type CatalogueSpec } from "@/lib/catalogue";

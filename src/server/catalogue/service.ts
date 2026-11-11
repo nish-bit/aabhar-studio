@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import { zipSync } from "fflate";
-import sharp from "sharp";
 
 import {
   CATALOGUE_LIMITS,
@@ -21,6 +20,8 @@ import { BUCKETS, type ObjectStorage } from "@/server/generation/ports";
 import { hasContactDetails } from "@/server/pdf/layout";
 import type { PdfCatalogueInput, RenderQuality } from "@/server/pdf/model";
 import { renderCataloguePdf } from "@/server/pdf/render";
+import { ImageHeaderError, orientedSize, readImageHeader } from "@/server/imaging/header";
+import { imageProcessor } from "@/server/imaging/processor";
 import { sniffImageType } from "@/server/imaging/validate";
 
 import { CatalogueRepository, type CatalogueItemRow, type CatalogueRow } from "./repository";
@@ -282,6 +283,9 @@ export async function signLogoUpload(deps: CatalogueDeps, userId: string, input:
   return { bucket: BUCKETS.brandAssets, path: signed.path, token: signed.token };
 }
 
+/** Same pixel ceiling sharp enforced before (limitInputPixels: 20M). */
+const LOGO_MAX_PIXELS = 20_000_000;
+
 /** Validate the uploaded logo, re-encode it (keeping transparency) and save it. */
 export async function completeLogoUpload(deps: CatalogueDeps, userId: string, uploadPath: string) {
   const shopId = await shopFor(deps, userId, true);
@@ -294,17 +298,26 @@ export async function completeLogoUpload(deps: CatalogueDeps, userId: string, up
     if (raw.byteLength > LOGO_LIMITS.maxBytes || !sniffImageType(raw)) {
       throw new DomainError("invalid_file", "That file isn't a PNG, JPG or WebP image under 2 MB.", 400);
     }
-    const meta = await sharp(raw, { limitInputPixels: 20_000_000 }).metadata();
-    if (!meta.width || !meta.height || Math.max(meta.width, meta.height) < LOGO_LIMITS.minDimension) {
+    let header;
+    try {
+      header = readImageHeader(raw);
+    } catch (err) {
+      if (err instanceof ImageHeaderError) throw new DomainError("invalid_file", "We couldn't read that image. Export it again as PNG or JPG.", 400);
+      throw err;
+    }
+    if (header.width * header.height > LOGO_MAX_PIXELS) {
+      throw new DomainError("invalid_file", "That logo image is too large. Use one under 20 megapixels.", 400);
+    }
+    const shown = orientedSize(header);
+    if (Math.max(shown.width, shown.height) < LOGO_LIMITS.minDimension) {
       throw new DomainError("invalid_file", "Your logo is too small. Use one at least 64px wide.", 400);
     }
-    const png = await sharp(raw)
-      .rotate()
-      .resize({ width: LOGO_LIMITS.maxDimension, height: LOGO_LIMITS.maxDimension, fit: "inside", withoutEnlargement: true })
-      .png({ compressionLevel: 9 })
-      .toBuffer();
+    const png = await imageProcessor().transform(raw, {
+      fitInside: { width: LOGO_LIMITS.maxDimension, height: LOGO_LIMITS.maxDimension },
+      output: { format: "png" },
+    });
     const path = `${shopId}/logo-${randomUUID()}.png`;
-    await deps.storage.upload(BUCKETS.brandAssets, path, new Uint8Array(png), "image/png");
+    await deps.storage.upload(BUCKETS.brandAssets, path, png.bytes, "image/png");
 
     const previous = (await deps.repo.businessProfile(shopId)).logoPath;
     await deps.repo.setLogo(shopId, path, "image/png");

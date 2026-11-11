@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import sharp from "sharp";
 
 import { presetAllowed, type PlanLimits } from "@/config/billing";
 import type { GenerationView, ReviewStatus } from "@/lib/api-types";
@@ -11,6 +10,8 @@ import { PRESETS, type PresetSlug } from "@/lib/presets";
 import { membershipOrOnboard } from "@/server/auth/ensure-shop";
 import { ProviderError, userMessageFor } from "@/server/providers/image/errors";
 import type { ImageEditProvider } from "@/server/providers/image/types";
+import { readImageHeader } from "@/server/imaging/header";
+import { imageProcessor } from "@/server/imaging/processor";
 import { ImageValidationError, outputSizeFor, sanitizeImage, validateDeclaredUpload, validateImageBytes } from "@/server/imaging/validate";
 
 import { DomainError, domainErrors } from "./domain-error";
@@ -42,6 +43,8 @@ export interface GenerationDeps {
 
 export const JOB_LEASE_SECONDS = 295;
 export const MAX_PROVIDER_ATTEMPTS = 2;
+/** Sanity cap on provider images (the model returns at most 1536×1024). */
+const PROVIDER_OUTPUT_MAX_PIXELS = 40_000_000;
 const MAX_UPLOADS_PER_10_MIN = 60;
 const SIGNED_URL_TTL_SECONDS = 600;
 
@@ -327,12 +330,12 @@ export async function runGenerationJob(deps: GenerationDeps, jobId: string): Pro
  */
 async function cropToPhotoSize<M extends string>(image: Uint8Array, mimeType: M, size: PhotoSize): Promise<{ image: Uint8Array; mimeType: M | "image/png" }> {
   try {
-    const meta = await sharp(image, { limitInputPixels: 40_000_000 }).metadata();
-    if (!meta.width || !meta.height) return { image, mimeType };
+    const meta = readImageHeader(image);
+    if (meta.width * meta.height > PROVIDER_OUTPUT_MAX_PIXELS) return { image, mimeType };
     const box = cropBoxFor(size, meta.width, meta.height);
     if (box.width === meta.width && box.height === meta.height) return { image, mimeType };
-    const out = await sharp(image, { limitInputPixels: 40_000_000 }).extract(box).png().toBuffer();
-    return { image: new Uint8Array(out), mimeType: "image/png" };
+    const out = await imageProcessor().transform(image, { cropCentre: { width: box.width, height: box.height }, output: { format: "png" } });
+    return { image: out.bytes, mimeType: "image/png" };
   } catch {
     return { image, mimeType };
   }
@@ -346,8 +349,11 @@ async function storeResult(
   meta: { usage: import("@/server/providers/image/types").TokenUsage | null; costUsdMicros: number | null; providerRequestId: string | null },
 ) {
   // Never trust provider bytes blindly: confirm it's a real, sane image.
-  const info = await sharp(image, { limitInputPixels: 40_000_000 }).metadata();
-  if (!info.width || !info.height || !["png", "jpeg", "webp"].includes(info.format ?? "")) {
+  let info: { width: number; height: number; format: string };
+  try {
+    info = readImageHeader(image);
+    if (info.width * info.height > PROVIDER_OUTPUT_MAX_PIXELS) throw new Error("output too large");
+  } catch {
     await deps.repo.failJob(job.id, "invalid_output", userMessageFor("fatal"), true);
     return;
   }

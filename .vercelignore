@@ -1,0 +1,19 @@
+# Never upload local secrets or build output with `vercel deploy`.
+# Production environment variables are set in the Vercel dashboard.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+certs/
+*.pem
+*.crt
+
+# Cloudflare Workers / OpenNext build output (not used on Vercel)
+.open-next/
+.wrangler/
+
+# Local build output and caches
+.next/
+node_modules/
+tsconfig.tsbuildinfo

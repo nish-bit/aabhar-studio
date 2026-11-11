@@ -29,7 +29,7 @@ const UNBUILT = [
 
 const marketingFiles = [
   "src/content/marketing.ts",
-  ...["hero", "how-it-works", "preset-showcase", "category-showcase", "catalogue-band", "segments", "faq", "final-cta", "pricing-teaser", "pricing-page", "style-gallery", "photo-gallery-section"].map(
+  ...["hero", "how-it-works", "preset-showcase", "category-showcase", "catalogue-band", "segments", "faq", "final-cta", "pricing-teaser", "pricing-page", "style-gallery", "photo-gallery-section", "product-summary"].map(
     (f) => `src/components/marketing/${f}.tsx`,
   ),
 ];

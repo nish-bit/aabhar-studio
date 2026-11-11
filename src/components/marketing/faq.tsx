@@ -30,7 +30,10 @@ export function Faq({ items, supportHref }: FaqProps) {
             {items.map((item, i) => (
               <AccordionItem key={item.question} value={`faq-${i}`}>
                 <AccordionTrigger>{item.question}</AccordionTrigger>
-                <AccordionContent>{item.answer}</AccordionContent>
+                {/* Always in the HTML so search engines and screen readers get every answer; collapsed with CSS. */}
+                <AccordionContent forceMount className="in-data-[state=closed]:hidden">
+                  {item.answer}
+                </AccordionContent>
               </AccordionItem>
             ))}
           </Accordion>

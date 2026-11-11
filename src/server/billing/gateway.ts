@@ -189,11 +189,31 @@ function toError(err: unknown): GatewayError {
   return new GatewayError(message, statusCode, code);
 }
 
+/**
+ * Razorpay API calls give up after this long. The SDK sets no timeout (axios
+ * waits forever), so a stalled call would otherwise hold the request open
+ * until the platform kills it. A call that times out after Razorpay did
+ * complete it is reconciled by webhooks and the billing cron, as with any
+ * other network failure.
+ */
+export const RAZORPAY_TIMEOUT_MS = 20_000;
+
 async function call<T>(fn: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new GatewayError(`Payment gateway didn't answer within ${RAZORPAY_TIMEOUT_MS / 1000}s`, 504, "GATEWAY_TIMEOUT")),
+      RAZORPAY_TIMEOUT_MS,
+    );
+  });
+  const request = fn();
+  request.catch(() => {}); // a late failure after the timeout must not surface as an unhandled rejection
   try {
-    return await fn();
+    return await Promise.race([request, timeout]);
   } catch (err: unknown) {
-    throw toError(err);
+    throw err instanceof GatewayError ? err : toError(err);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -286,6 +306,9 @@ export class RazorpayGateway implements PaymentGateway {
       key_id: keyId,
       key_secret: keySecret,
     });
+    // Also abort the underlying HTTP request at the same deadline, when the SDK's axios instance is reachable.
+    const rq = (this.rzp as unknown as { api?: { rq?: { defaults?: { timeout?: number } } } }).api?.rq;
+    if (rq?.defaults) rq.defaults.timeout = RAZORPAY_TIMEOUT_MS;
   }
 
   async createOrder(

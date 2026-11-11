@@ -35,6 +35,13 @@ const schema = z.object({
   /** Direct Postgres connection (Supabase transaction pooler). Used by the catalogue builder. */
   DATABASE_URL: z.preprocess(empty, z.string().regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgres://").optional()),
 
+  /**
+   * The database server's CA (Supabase: prod-ca-2021.crt), as a file path or PEM text, so Node
+   * verifies the certificate (src/server/db/ssl.ts). Not used on Cloudflare Workers, where
+   * Hyperdrive verifies the connection to Supabase.
+   */
+  DATABASE_SSL_CA: z.preprocess(empty, z.string().optional()),
+
   /** Connections per server instance (keep small on serverless with the transaction pooler). */
   DATABASE_POOL_MAX: z.preprocess(empty, z.coerce.number().int().min(1).max(20).default(5)),
 

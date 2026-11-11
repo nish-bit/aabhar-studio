@@ -4,8 +4,15 @@ import Link from "next/link";
 import { Fill, LegalPage } from "@/components/marketing/legal-page";
 import { brand } from "@/content/marketing";
 import { RETENTION } from "@/server/privacy/retention";
+import { JsonLd } from "@/components/seo/json-ld";
+import { pageMetadata } from "@/lib/site";
+import { breadcrumbSchema, graph } from "@/lib/structured-data";
 
-export const metadata: Metadata = { title: "Privacy policy" };
+export const metadata: Metadata = pageMetadata({
+  title: "Privacy policy",
+  description: "How Aabhar Studio collects, stores and protects your account details, uploaded jewellery photos and payment records.",
+  path: "/legal/privacy",
+});
 
 /**
  * Draft privacy policy. Every factual statement below describes what the
@@ -14,6 +21,7 @@ export const metadata: Metadata = { title: "Privacy policy" };
 export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy policy" updated="Draft, October 2026">
+      <JsonLd data={graph(breadcrumbSchema("Privacy policy", "/legal/privacy"))} />
       <p>
         This policy explains what <Fill>legal business name</Fill> (“we”) collects when you use Aabhar Studio, why, who processes it for
         us, how long we keep it, and how to ask for it to be deleted. Contact:{" "}

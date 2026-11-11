@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 import { BuiltForStrip } from "@/components/marketing/built-for-strip";
 import { CatalogueBand } from "@/components/marketing/catalogue-band";
 import { CategoryShowcase } from "@/components/marketing/category-showcase";
@@ -9,23 +11,47 @@ import { MobileStickyCta } from "@/components/marketing/mobile-sticky-cta";
 import { PhotoGallerySection } from "@/components/marketing/photo-gallery-section";
 import { PresetShowcase } from "@/components/marketing/preset-showcase";
 import { PricingTeaser } from "@/components/marketing/pricing-teaser";
+import { ProductSummary } from "@/components/marketing/product-summary";
 import { Segments } from "@/components/marketing/segments";
 import { freeImagesMessage, pricingPacks } from "@/config/plans";
 import { getPublicPricing } from "@/server/billing/public-pricing";
 import { heroPair } from "@/content/demo-images";
 import { PHOTO_GALLERY } from "@/content/photo-gallery";
+import { JsonLd } from "@/components/seo/json-ld";
+import { pageMetadata } from "@/lib/site";
+import { faqSchema, graph, organizationSchema, softwareApplicationSchema, websiteSchema } from "@/lib/structured-data";
 import {
   builtFor,
   catalogueFeature,
   catalogueSample,
   categoryShowcase,
-  faqs,
   finalCta,
   heroContent,
+  homeFaqs,
   presets,
+  productSummary,
   segments,
   steps,
 } from "@/content/marketing";
+
+export const metadata: Metadata = {
+  ...pageMetadata({
+    title: "Aabhar Studio | AI Jewellery Photography and Catalogue Maker",
+    description:
+      "Turn phone photos of jewellery into studio-style product images with AI. Pick a studio look, compare it with your original, and build print-ready catalogues for retail and wholesale buyers.",
+    path: "/",
+    absoluteTitle: true,
+  }),
+  keywords: [
+    "AI jewellery photography",
+    "jewellery product photography",
+    "jewellery catalogue maker",
+    "jewellery photo editing",
+    "AI product photos for jewellers",
+    "jewellery images for WhatsApp and Instagram",
+    "wholesale jewellery catalogue",
+  ],
+};
 
 /**
  * Homepage. A server component that only composes data into
@@ -33,10 +59,15 @@ import {
  */
 export default async function HomePage() {
   const { pricing } = await getPublicPricing();
+  const faqs = homeFaqs(pricing.trialCredits);
   return (
     <>
+      <JsonLd
+        data={graph(organizationSchema(), websiteSchema(), softwareApplicationSchema({ trialCredits: pricing.trialCredits }), faqSchema(faqs))}
+      />
       <Hero {...heroContent} trustLine={`${freeImagesMessage(pricing.trialCredits)} ${heroContent.trustLine}`} pair={heroPair} />
       <BuiltForStrip label="Designed for" items={builtFor} />
+      <ProductSummary summary={productSummary} freeImagesLine={freeImagesMessage(pricing.trialCredits)} cta={heroContent.primaryCta} />
       <HowItWorks steps={steps} />
       <PresetShowcase presets={presets} />
       <PhotoGallerySection photos={PHOTO_GALLERY} />

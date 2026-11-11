@@ -107,7 +107,7 @@ export const billingFaqs: FaqItem[] = [
   {
     question: "What happens to unused credits?",
     answer:
-      "Credits from a plan last 12 months from purchase. Free trial credits expire sooner; your billing page shows every expiry date. We always spend the credits that expire soonest first.",
+      "Credits from a pack last 12 months from purchase. Free trial credits expire sooner; your billing page shows every expiry date. We always spend the credits that expire soonest first.",
   },
   {
     question: "What if an image fails?",

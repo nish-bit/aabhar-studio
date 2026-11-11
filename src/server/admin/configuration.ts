@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { billingConfig, planById, type PlanLimits } from "@/config/billing";
 import type { AdminConfigView, AdminPlanView, AdminPresetView } from "@/lib/admin-types";
-import { CATALOGUE_LIMITS } from "@/lib/catalogue";
 import { PRESET_SLUGS, PRESETS } from "@/lib/presets";
+import { planLimitsSchema, planMonthlyCreditsSchema, trialTermsSchema } from "@/server/billing/plan-overrides";
 import { iso } from "@/server/billing/repository";
 import { DomainError, domainErrors } from "@/server/generation/domain-error";
 import { loadPresetSettings } from "@/server/presets/settings";
@@ -20,26 +20,15 @@ import { reasonSchema } from "./users";
  * `npm run billing:sync` after approval.
  */
 
-const limitsSchema = z.object({
-  maxActiveJobs: z.number().int().min(1).max(20),
-  dailyGenerations: z.number().int().min(1).max(10_000),
-  maxCatalogues: z.number().int().min(0).max(1000),
-  maxCatalogueItems: z.number().int().min(1).max(CATALOGUE_LIMITS.maxItems),
-  presets: z.union([z.literal("all"), z.array(z.enum(PRESET_SLUGS)).min(1).max(PRESET_SLUGS.length)]),
-});
-
+// The same rules validate admin writes here and overrides read back for public pricing.
 export const planUpdateSchema = z.object({
   planId: z.string().min(1).max(40),
-  monthlyCredits: z.number().int().min(0).max(100_000),
-  limits: limitsSchema,
+  monthlyCredits: planMonthlyCreditsSchema,
+  limits: planLimitsSchema,
   reason: reasonSchema,
 });
 
-export const trialUpdateSchema = z.object({
-  credits: z.number().int().min(0).max(1000),
-  validityDays: z.number().int().min(1).max(3650),
-  reason: reasonSchema,
-});
+export const trialUpdateSchema = trialTermsSchema.extend({ reason: reasonSchema });
 
 export const presetUpdateSchema = z.object({
   slug: z.enum(PRESET_SLUGS),

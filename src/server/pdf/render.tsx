@@ -1,5 +1,8 @@
+// Must load before react-pdf opens any document (registers pdfkit's built-in fonts).
+import "@/server/pdf/pdfkit-standard-fonts";
 import { renderToBuffer } from "@react-pdf/renderer";
-import sharp from "sharp";
+import { readImageHeader } from "@/server/imaging/header";
+import { imageProcessor } from "@/server/imaging/processor";
 
 import { CatalogueDocument, type CatalogueAssets } from "./catalogue-document";
 import { registerCatalogueFonts } from "./fonts";
@@ -13,6 +16,9 @@ import type { PdfCatalogueInput, PreparedImage, RenderQuality } from "./model";
  * so fine metalwork and stone edges stay crisp); logos with transparency stay
  * PNG. This keeps a 10-product catalogue to a few MB instead of tens.
  */
+/** Same pixel ceiling sharp enforced before (limitInputPixels: 60M). */
+const PDF_IMAGE_MAX_PIXELS = 60_000_000;
+
 const PROFILE: Record<RenderQuality, { dpi: number; jpegQuality: number }> = {
   print: { dpi: 300, jpegQuality: 88 },
   preview: { dpi: 110, jpegQuality: 72 },
@@ -29,19 +35,19 @@ export async function prepareImage(
   const maxW = Math.ceil((boxPt.width / 72) * dpi);
   const maxH = Math.ceil((boxPt.height / 72) * dpi);
   try {
-    const base = sharp(bytes, { limitInputPixels: 60_000_000 })
-      .rotate()
-      .resize({ width: maxW, height: maxH, fit: "inside", withoutEnlargement: true });
-    const meta = await sharp(bytes).metadata();
+    const meta = readImageHeader(bytes);
+    if (meta.width * meta.height > PDF_IMAGE_MAX_PIXELS) return null;
+    const fitInside = { width: maxW, height: maxH };
     if (opts.keepAlpha && meta.hasAlpha) {
-      const { data, info } = await base.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true });
-      return { data, format: "png", width: info.width, height: info.height };
+      const out = await imageProcessor().transform(bytes, { fitInside, output: { format: "png" } });
+      return { data: Buffer.from(out.bytes), format: "png", width: out.width, height: out.height };
     }
-    const { data, info } = await base
-      .flatten({ background: "#ffffff" })
-      .jpeg({ quality: jpegQuality, chromaSubsampling: "4:4:4", mozjpeg: true })
-      .toBuffer({ resolveWithObject: true });
-    return { data, format: "jpg", width: info.width, height: info.height };
+    const out = await imageProcessor().transform(bytes, {
+      fitInside,
+      background: "#ffffff",
+      output: { format: "jpeg", quality: jpegQuality, fullChroma: true },
+    });
+    return { data: Buffer.from(out.bytes), format: "jpg", width: out.width, height: out.height };
   } catch {
     // Corrupt or unreadable image: the page shows "Image unavailable" instead of failing the export.
     return null;

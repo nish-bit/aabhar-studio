@@ -1,5 +1,6 @@
-# Runs on every pull request and push to main. Vercel deploys separately
-# (Git integration); protect `main` so it only merges when this passes.
+# Runs on every pull request and push to main. Production is deployed to
+# Cloudflare Workers separately (`npm run deploy`); protect `main` so it only
+# merges when this passes. CI never deploys and never connects to Supabase.
 name: CI
 
 on:
@@ -14,10 +15,12 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     services:
+      # Disposable PostgreSQL 17 (same major as Supabase) for the real-Postgres
+      # tests (payment races, concurrency, RLS sweep). Destroyed after the job.
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
         ports: ["5432:5432"]
@@ -25,7 +28,7 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      # Real-PostgreSQL tests (concurrency, RLS sweep). Disposable CI database only.
+      # Disposable CI database only. tests/pg creates and drops its own databases on it.
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -35,12 +38,20 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Workers dependency patches applied (pdfkit, yoga-layout)
+        run: |
+          node -e "const p=require('./node_modules/pdfkit/package.json'); if (p.exports['.'].workerd !== './js/pdfkit.workerd.mjs') { console.error('pdfkit workerd patch missing'); process.exit(1) }"
+          node -e "const y=require('./node_modules/yoga-layout/package.json'); if (y.exports['./load'].workerd !== './dist/src/load.workerd.js') { console.error('yoga-layout workerd patch missing'); process.exit(1) }"
       - run: npx tsc --noEmit
       - run: npm run lint
-      - run: npm audit --omit=dev --audit-level=high
-      - run: npm test
+      - name: Production dependency audit (high/critical, with recorded exceptions)
+        run: node scripts/audit-gate.mjs
+      - name: Tests (unit, integration, real PostgreSQL)
+        run: npm test
       - name: Build without secrets
         run: npm run build
+      - name: Cloudflare Workers build (OpenNext), without secrets
+        run: npx opennextjs-cloudflare build
       - name: Migrations apply cleanly, one transaction per file
         env:
           PGPASSWORD: postgres

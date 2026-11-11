@@ -1,4 +1,6 @@
 import { demoImages } from "@/content/demo-images";
+import { JEWELLERY_TYPES } from "@/lib/jewellery-types";
+import { PHOTO_SIZES } from "@/lib/photo-sizes";
 import { PRESET_SLUGS, PRESETS, type PresetSlug } from "@/lib/presets";
 import type { DemoImage, FaqItem, FeatureStep, NavLink, Segment, StylePreset } from "@/types/content";
 
@@ -183,7 +185,7 @@ export const faqs: FaqItem[] = [
   {
     question: "Who owns the images?",
     answer:
-      "You do. Your photos and results are stored privately for your account only and are never shown publicly unless you share a link.",
+      "You do. Your photos and results are stored privately for your account only and are never shown publicly. You decide where to post the images you download.",
   },
   {
     question: "How do credits work?",
@@ -254,3 +256,82 @@ export const finalCta = {
 
 export const demoNoticeMessage =
   "Preview build — sample photographs, demo catalogue data and indicative pricing. No images are generated on this page.";
+
+/**
+ * "What is Aabhar Studio?" — a short, plain answer near the top of the
+ * homepage for people and search/answer engines. Every statement matches
+ * what the app does today (presets, catalogue builder, billing).
+ */
+export const productSummary = {
+  title: "What is Aabhar Studio?",
+  answer:
+    "Aabhar Studio is a web app for jewellers that turns a phone photo of a piece into a studio-style product image using AI, then builds print-ready PDF catalogues from the images you approve.",
+  problem:
+    "Studio shoots are slow and costly to repeat for every new piece. Aabhar Studio lets you photograph on the phone you already have and get one consistent look across your range.",
+  audience: [
+    { label: "Retail jewellers", href: "/#segment-retailers" },
+    { label: "Wholesalers", href: "/#segment-wholesalers" },
+    { label: "Jewellery brands", href: "/#segment-brands" },
+    { label: "Marketplace sellers", href: "/#segment-marketplace" },
+  ],
+  features: [
+    "Upload a JPG, PNG or WebP photo of one piece",
+    "Choose one of six studio looks, from White Studio to Editorial",
+    "Pick an image size for catalogues, Instagram posts, banners or Stories",
+    "Compare each result with your original before you approve it",
+    "Download images, or build an A4 PDF catalogue with your logo, SKUs and prices",
+    "Retail and wholesale versions of a catalogue, with prices shown or hidden",
+  ],
+};
+
+/** "a, b and c" */
+const listOf = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+
+/** Direct answers to the questions people ask before signing up, followed by the product FAQs. */
+export function homeFaqs(trialCredits: number): FaqItem[] {
+  const images = `${trialCredits} free AI jewellery ${trialCredits === 1 ? "image" : "images"}`;
+  return [
+    { question: "What is Aabhar Studio?", answer: productSummary.answer },
+    {
+      question: "Who is Aabhar Studio for?",
+      answer:
+        "Retail jewellers, wholesalers, jewellery brands and marketplace sellers who need clean, consistent product photos and catalogues without booking a studio for every piece.",
+    },
+    {
+      question: "How does Aabhar Studio work?",
+      answer:
+        "Sign in, pick the type of piece, upload a phone photo of it, choose a studio look and an image size, then generate. Compare the result with your original side by side, approve the images you're happy with, and download them or add them to a catalogue.",
+    },
+    {
+      question: "What jewellery can I photograph?",
+      answer: `The Studio has a setting for each of these: ${listOf(JEWELLERY_TYPES.map((t) => t.name.toLowerCase()))}. Upload one piece, or one set, per photo.`,
+    },
+    {
+      question: "What image sizes can I download?",
+      answer: `You choose one of ${PHOTO_SIZES.length} sizes before you generate: ${PHOTO_SIZES.map((p) => `${p.name}, ${p.orientation.toLowerCase()} ${p.output.width}×${p.output.height} px (${p.uses})`).join("; ")}.`,
+    },
+    {
+      question: "Is there a free plan?",
+      answer: `There's a free trial: every new account gets ${images}. After that you buy credits as you need them.`,
+    },
+    {
+      question: "What plans are there, and do I need to cancel a subscription?",
+      answer:
+        "Credits come in one-time packs paid through Razorpay. Nothing renews, so there's no subscription to cancel. Pack credits last 12 months from purchase. The pricing page lists the current packs.",
+    },
+    {
+      question: "How do I create an account?",
+      answer: "Sign in with Google on the sign-in page. Signing in creates your account, and we never see your Google password.",
+    },
+    {
+      question: "How are my photos and payments kept safe?",
+      answer:
+        "Your uploads and results are stored privately for your account. Payments go through Razorpay's checkout, so your card or UPI details are entered with Razorpay, not on Aabhar Studio.",
+    },
+    {
+      question: "How do I contact support?",
+      answer: `Email ${brand.supportEmail} or message us on WhatsApp at ${brand.supportWhatsAppDisplay}. The contact page has both.`,
+    },
+    ...faqs,
+  ];
+}

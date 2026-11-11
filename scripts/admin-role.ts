@@ -15,11 +15,13 @@ import os from "node:os";
 
 import postgres from "postgres";
 
+import { postgresSsl } from "../src/server/db/ssl";
+
 async function main() {
   const [cmd, email, role = "support", ...noteParts] = process.argv.slice(2);
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  const sql = postgres(url, { prepare: false, max: 1, ssl: url.includes("localhost") || url.includes("127.0.0.1") ? false : "require" });
+  const sql = postgres(url, { prepare: false, max: 1, ssl: postgresSsl(url) });
   const operator = `script:${os.userInfo().username}@${os.hostname()}`;
   try {
     if (cmd === "list") {

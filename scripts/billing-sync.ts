@@ -14,6 +14,8 @@
  */
 import postgres from "postgres";
 
+import { postgresSsl } from "../src/server/db/ssl";
+
 import { billingConfig, paidPlans } from "@/config/billing";
 import { RazorpayGateway } from "@/server/billing/gateway";
 import { BillingRepository } from "@/server/billing/repository";
@@ -22,7 +24,7 @@ import type { Db, SqlParam } from "@/server/db/sql";
 const apply = process.argv.includes("--apply");
 
 function db(url: string): { db: Db; end: () => Promise<void> } {
-  const sql = postgres(url, { prepare: false, max: 1, ssl: url.includes("localhost") || url.includes("127.0.0.1") ? false : "require" });
+  const sql = postgres(url, { prepare: false, max: 1, ssl: postgresSsl(url) });
   const wrap = (c: postgres.Sql | postgres.TransactionSql): Db => ({
     query: async <T,>(text: string, params: SqlParam[] = []) => (await c.unsafe(text, params as never[])) as unknown as T[],
     transaction: async <T,>(fn: (tx: Db) => Promise<T>) => ("savepoint" in c ? fn(wrap(c)) : ((await (c as postgres.Sql).begin((tx) => fn(wrap(tx)))) as T)),

@@ -80,7 +80,7 @@ export function useBilling(initial: BillingOverview) {
   );
 
   const runCheckout = useCallback(
-    async (label: string, start: () => Promise<{ checkout: Parameters<typeof openCheckout>[0] }>, verify: (r: Awaited<ReturnType<typeof openCheckout>> & { kind: "success" }) => Promise<{ status: "confirmed" | "pending"; creditsGranted: number }>) => {
+    async (label: string, start: () => Promise<{ checkout: Parameters<typeof openCheckout>[0] }>, verify: (r: Awaited<ReturnType<typeof openCheckout>> & { kind: "success" }) => Promise<{ status: "confirmed" | "pending" | "failed"; creditsGranted: number }>) => {
       if (checkoutInProgress.current) return;
       checkoutInProgress.current = true;
       setNotice(null);
@@ -109,6 +109,13 @@ export function useBilling(initial: BillingOverview) {
           } catch {
             setNotice({ tone: "info", text: "Payment is confirmed, but your balance couldn't refresh. Reload this page to see the updated credits." });
           }
+        } else if (v.status === "failed") {
+          // Razorpay confirmed the payment failed: no credits were added. Same failure state as Checkout's own errors.
+          setCheckout({
+            phase: "failed",
+            message: "Razorpay reported that the payment failed, so no credits were added. If your bank shows a debit, it will be reversed. You can try again.",
+          });
+          await refresh().catch(() => undefined);
         } else {
           setCheckout({ phase: "pending", message: "Payment received by Razorpay. Waiting for confirmation…" });
           void pollUntilConfirmed(result.response.razorpay_payment_id);

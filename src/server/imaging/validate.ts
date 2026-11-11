@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 
-import sharp from "sharp";
-
 import { UPLOAD_LIMITS, type AcceptedMimeType } from "@/lib/upload-limits";
+
+import { ImageHeaderError, type ImageHeader, orientedSize, readImageHeader } from "./header";
+import { imageProcessor } from "./processor";
 
 /**
  * Validation and sanitising for uploaded photos. Works on the actual bytes:
@@ -91,31 +92,29 @@ export async function validateImageBytes(
     throw new ImageValidationError("type_mismatch", "The file's contents don't match its type. Re-export it as JPG or PNG.");
   }
 
-  let width: number | undefined;
-  let height: number | undefined;
-  try {
-    const meta = await sharp(bytes, { limitInputPixels: UPLOAD_LIMITS.maxPixels }).metadata();
-    // Respect EXIF orientation when judging dimensions.
-    const rotated = (meta.orientation ?? 1) >= 5;
-    width = rotated ? meta.height : meta.width;
-    height = rotated ? meta.width : meta.height;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "";
-    if (/pixel limit/i.test(msg)) {
-      throw new ImageValidationError("too_many_pixels", "This photo is too large. Use one under 40 megapixels.");
-    }
-    throw new ImageValidationError("unreadable", "We couldn't read this image. Try exporting it again.");
-  }
+  // Respect EXIF orientation when judging dimensions.
+  const { width, height } = orientedSize(readUploadHeader(bytes));
+  return { mimeType: sniffed, width, height };
+}
 
-  if (!width || !height) throw new ImageValidationError("unreadable", "We couldn't read this image.");
-  if (width * height > UPLOAD_LIMITS.maxPixels) {
+/** Header of an uploaded photo, with the size limits applied before any pixels are decoded. */
+function readUploadHeader(bytes: Uint8Array): ImageHeader {
+  let header: ImageHeader;
+  try {
+    header = readImageHeader(bytes);
+  } catch (err) {
+    if (err instanceof ImageHeaderError) {
+      throw new ImageValidationError("unreadable", "We couldn't read this image. Try exporting it again.");
+    }
+    throw err;
+  }
+  if (header.width * header.height > UPLOAD_LIMITS.maxPixels) {
     throw new ImageValidationError("too_many_pixels", "This photo is too large. Use one under 40 megapixels.");
   }
-  if (Math.max(width, height) > UPLOAD_LIMITS.maxDimension) {
+  if (Math.max(header.width, header.height) > UPLOAD_LIMITS.maxDimension) {
     throw new ImageValidationError("too_big_dimensions", "This photo is wider or taller than 12,000px.");
   }
-
-  return { mimeType: sniffed, width, height };
+  return header;
 }
 
 export interface SanitizedImage {
@@ -132,20 +131,20 @@ export interface SanitizedImage {
  * PNGs with transparency stay PNG; everything else becomes high-quality JPEG.
  */
 export async function sanitizeImage(bytes: Uint8Array): Promise<SanitizedImage> {
-  const image = sharp(bytes, { limitInputPixels: UPLOAD_LIMITS.maxPixels }).rotate();
-  const meta = await sharp(bytes).metadata();
-  const keepPng = meta.format === "png" && meta.hasAlpha === true;
+  const header = readUploadHeader(bytes);
+  const keepPng = header.format === "png" && header.hasAlpha;
 
-  const out = keepPng
-    ? await image.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true })
-    : await image.jpeg({ quality: 92, mozjpeg: true }).toBuffer({ resolveWithObject: true });
+  const out = await imageProcessor().transform(bytes, {
+    output: keepPng ? { format: "png" } : { format: "jpeg", quality: 92 },
+    background: "#ffffff",
+  });
 
   return {
-    bytes: new Uint8Array(out.data),
+    bytes: out.bytes,
     mimeType: keepPng ? "image/png" : "image/jpeg",
-    width: out.info.width,
-    height: out.info.height,
-    sha256: createHash("sha256").update(out.data).digest("hex"),
+    width: out.width,
+    height: out.height,
+    sha256: createHash("sha256").update(out.bytes).digest("hex"),
   };
 }
 

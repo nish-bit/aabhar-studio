@@ -1,6 +1,7 @@
-import path from "node:path";
-
 import { Font } from "@react-pdf/renderer";
+
+import { FONT_DATA_URLS } from "./font-data.generated";
+import "./pdfkit-standard-fonts";
 
 /**
  * Embedded fonts (SIL Open Font License, see ./fonts/LICENSE-*):
@@ -9,7 +10,16 @@ import { Font } from "@react-pdf/renderer";
  * from their Latin and Latin Extended subsets so ₹ is included.
  * react-pdf embeds only the glyphs used (subsetting), which keeps files small.
  */
-const FONT_DIR = path.join(process.cwd(), "src", "server", "pdf", "fonts");
+/**
+ * Fonts are embedded in the server bundle as data URLs (font-data.generated.ts),
+ * so PDFs render the same on Node and on Cloudflare Workers, which has no
+ * filesystem. Regenerate with `node scripts/generate-pdf-font-data.mjs`.
+ */
+const font = (file: string) => {
+  const src = FONT_DATA_URLS[file];
+  if (!src) throw new Error(`PDF font ${file} is missing from font-data.generated.ts`);
+  return src;
+};
 
 export const FONT = {
   sans: "CatalogueSans",
@@ -28,22 +38,22 @@ export function registerCatalogueFonts(): void {
   Font.register({
     family: FONT.sans,
     fonts: [
-      { src: path.join(FONT_DIR, "Inter-Regular.ttf"), fontWeight: 400 },
-      { src: path.join(FONT_DIR, "Inter-SemiBold.ttf"), fontWeight: 600 },
+      { src: font("Inter-Regular.ttf"), fontWeight: 400 },
+      { src: font("Inter-SemiBold.ttf"), fontWeight: 600 },
     ],
   });
   Font.register({
     family: FONT.display,
     fonts: [
-      { src: path.join(FONT_DIR, "CormorantGaramond-Medium.ttf"), fontWeight: 500 },
-      { src: path.join(FONT_DIR, "CormorantGaramond-SemiBold.ttf"), fontWeight: 600 },
+      { src: font("CormorantGaramond-Medium.ttf"), fontWeight: 500 },
+      { src: font("CormorantGaramond-SemiBold.ttf"), fontWeight: 600 },
     ],
   });
   Font.register({
     family: FONT.devanagari,
     fonts: [
-      { src: path.join(FONT_DIR, "NotoSansDevanagari-Regular.ttf"), fontWeight: 400 },
-      { src: path.join(FONT_DIR, "NotoSansDevanagari-SemiBold.ttf"), fontWeight: 600 },
+      { src: font("NotoSansDevanagari-Regular.ttf"), fontWeight: 400 },
+      { src: font("NotoSansDevanagari-SemiBold.ttf"), fontWeight: 600 },
     ],
   });
   // No dictionary hyphenation (it mangles names and SKUs), but split very long

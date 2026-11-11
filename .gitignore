@@ -27,3 +27,26 @@ pnpm-debug.log*
 
 # Supabase local temporary files
 supabase/.temp/
+# OpenNext
+.open-next
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+
+!.env.example
+
+# Local Vite/Vitest cache (vitest.config.mts cacheDir)
+/.cache/
+
+# Certificates and keys (e.g. the Supabase CA for DATABASE_SSL_CA) never belong in git
+/certs/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Vercel CLI project link
+.vercel

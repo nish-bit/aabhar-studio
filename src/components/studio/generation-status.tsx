@@ -35,10 +35,14 @@ export function GenerationStatus({
   const [now, setNow] = React.useState<number | null>(null);
 
   React.useEffect(() => {
-    setNow(Date.now());
-
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
+    const tick = () => setNow(Date.now());
+    // First tick right after mount (not during render), so the server and the first client render agree.
+    const first = setTimeout(tick, 0);
+    const t = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+    };
   }, []);
 
   const current = STEPS.findIndex((s) => s.key === status);

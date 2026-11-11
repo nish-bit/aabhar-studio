@@ -1,3 +1,5 @@
+// Must load before react-pdf opens any document (registers pdfkit's built-in fonts).
+import "@/server/pdf/pdfkit-standard-fonts";
 import { Document, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
 
 import { formatPaise } from "@/lib/format";
