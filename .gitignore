@@ -50,3 +50,14 @@ supabase/.temp/
 
 # Vercel CLI project link
 .vercel
+
+# Database dumps, backups and logs (may contain customer data). Migrations stay tracked.
+*.dump
+*.backup
+*.sql.gz
+/dump*.sql
+/backup*.sql
+*.log
+
+# TypeScript incremental build cache (rewritten by every build)
+*.tsbuildinfo
