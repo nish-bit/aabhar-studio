@@ -32,6 +32,7 @@ export type ApiErrorCode =
   | "plan_limit"
   | "account_disabled"
   | "billing_not_configured"
+  | "subscriptions_unavailable"
   | "payment_failed"
   | "internal_error";
 

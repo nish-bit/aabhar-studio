@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
+  // Wraps OpenNext's generated .open-next/worker.js and adds the queue consumer and cron handlers.
+  "main": "worker.ts",
   "name": "aabhar-studio",
   "compatibility_date": "2026-11-03",
   // nodejs_compat is required by OpenNext (node:crypto, Buffer, AsyncLocalStorage, process.env).
@@ -8,6 +9,16 @@
     "nodejs_compat",
     "global_fetch_strictly_public"
   ],
+  // Keep plain-text variables set in the dashboard on deploy / versions upload (secrets are always kept).
+  "keep_vars": true,
+  // Public, non-secret runtime values only (the same ones are in .env.example). Secrets never go here.
+  // NEXT_PUBLIC_* must ALSO be Workers Builds build variables: Next.js writes them into the browser bundle.
+  "vars": {
+    "NEXT_PUBLIC_SUPABASE_URL": "https://eguuncnkcjqmeatrpzcj.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_l6NnIvtSOxTWgx48GaU7VA_ZE92nE5s",
+    // Live Razorpay stays off until a reviewed commit changes this.
+    "BILLING_LIVE_APPROVED": "false"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS",
@@ -22,6 +33,47 @@
   ],
   "images": {
     "binding": "IMAGES"
+  },
+  // Database on Workers: src/server/db/postgres.ts connects only through this binding (never DATABASE_URL).
+  // Hyperdrive holds the verified TLS connection to the Supabase session pooler and pools it.
+  // Local `wrangler dev` / `npm run preview` take the connection string from
+  // CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE (docs/DEPLOYMENT.md), not from this file.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "e76b8429318a4f4a992f3595eed21c85"
+    }
+  ],
+  // Image generation runs from a queue (src/worker/background.ts), not after(): Workers stop
+  // after() ~30 s after the response, and an OpenAI edit can take up to 140 s.
+  // Both queues must exist before a build with this config is uploaded (docs/DEPLOYMENT.md).
+  "queues": {
+    "producers": [
+      { "binding": "GENERATION_QUEUE", "queue": "aabhar-generation" }
+    ],
+    "consumers": [
+      {
+        "queue": "aabhar-generation",
+        // One job per invocation, at most 5 at once: bounds parallel OpenAI calls and database connections.
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 5,
+        // The consumer sets each retry's delay (15 s doubling to 240 s), so all retries end inside the
+        // watchdog's 10-minute window. Then the message is dead-lettered and the watchdog refunds the job.
+        "max_retries": 5,
+        "dead_letter_queue": "aabhar-generation-dlq"
+      },
+      {
+        // Logs dead-lettered jobs (generation.dead_letter); the watchdog refunds them.
+        "queue": "aabhar-generation-dlq",
+        "max_batch_size": 10
+      }
+    ]
+  },
+  // Same schedules (UTC) as vercel.json. worker.ts calls the existing /api/cron/* routes with CRON_SECRET.
+  // `opennextjs-cloudflare upload` doesn't apply triggers: run `npx wrangler triggers deploy` when going live.
+  "triggers": {
+    "crons": ["*/10 * * * *", "17 * * * *", "23 21 * * *"]
   },
   "observability": {
     "enabled": true

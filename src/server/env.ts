@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { z } from "zod";
 
 /**
@@ -137,11 +138,23 @@ export interface IntegrationStatus {
   providerLabel: string | null;
 }
 
+const onWorkers = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+
+/** Same rule as server/db/postgres.ts: Workers use only the HYPERDRIVE binding, Node uses DATABASE_URL. */
+function databaseConfigured(): boolean {
+  if (!onWorkers) return Boolean(serverEnv().DATABASE_URL);
+  try {
+    return Boolean(getCloudflareContext().env.HYPERDRIVE?.connectionString);
+  } catch {
+    return false; // outside a request
+  }
+}
+
 export function integrationStatus(): IntegrationStatus {
   const provider = openAIConfig();
   return {
     supabase: supabaseConfig() !== null,
-    database: Boolean(serverEnv().DATABASE_URL),
+    database: databaseConfigured(),
     imageProvider: provider !== null,
     providerLabel: provider ? `OpenAI ${provider.model}` : null,
   };

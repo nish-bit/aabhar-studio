@@ -71,6 +71,15 @@ export const billingConfig = {
   /** Flip to true once you approve these prices; removes the "indicative" label. */
   pricesApproved: false,
 
+  /**
+   * Monthly plans were taken off sale on 3 Nov 2026 (credit packs replaced
+   * them). While false, starting a subscription and changing plan both answer
+   * 503 "subscriptions_unavailable" before Razorpay or the database is
+   * touched, whatever plan_prices contains. Existing subscribers can still
+   * cancel, and their renewals and webhooks are processed as before.
+   */
+  subscriptionsOnSale: false,
+
   trial: TRIAL,
 
   /** Plan credits are valid for the billing period they were granted for. */

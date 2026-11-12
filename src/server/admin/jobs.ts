@@ -207,7 +207,8 @@ export async function retryJob(deps: AdminDeps, ctx: AdminContext, input: { jobI
       [newJobId, job.id],
     )
     .catch(() => undefined);
-  deps.startJob?.(newJobId);
+  // Awaited: on Workers it sends to the queue, which must finish before the response.
+  await deps.startJob?.(newJobId);
   return { jobId: newJobId };
 }
 

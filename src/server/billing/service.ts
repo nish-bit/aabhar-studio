@@ -44,6 +44,8 @@ export interface BillingDeps {
   availability: BillingAvailability;
   /** Shown in Razorpay Checkout. */
   appName?: string;
+  /** Overrides billingConfig.subscriptionsOnSale (tests of the subscription lifecycle). */
+  subscriptionsOnSale?: boolean;
   now?: () => Date;
   log?: (event: string, data: Record<string, unknown>) => void;
 }
@@ -76,6 +78,17 @@ const log = (deps: BillingDeps, event: string, data: Record<string, unknown>) =>
 function planNotPurchasable(deps: BillingDeps, planId: string, mode: BillingMode, reason: "price_missing" | "price_out_of_sync") {
   log(deps, "billing.plan_not_purchasable", { planId, mode, reason, fix: "npm run billing:sync -- --apply" });
   return new DomainError("billing_not_configured", "This plan can't be bought right now. Please try again later, or contact support.", 503);
+}
+
+/**
+ * Monthly plans are off sale (billingConfig.subscriptionsOnSale). Checked
+ * first, so a blocked request never reaches Razorpay or the database, and the
+ * block doesn't depend on plan_prices being empty.
+ */
+function requireSubscriptionsOnSale(deps: BillingDeps, action: "subscribe" | "change_plan") {
+  if (deps.subscriptionsOnSale ?? billingConfig.subscriptionsOnSale) return;
+  log(deps, "billing.subscriptions_unavailable", { action });
+  throw new DomainError("subscriptions_unavailable", "Monthly plans aren't available right now. You can buy a credit pack instead.", 503);
 }
 
 /* ------------------------------------------------------------------ views */
@@ -317,6 +330,7 @@ export async function createSubscription(
   user: { id: string; email: string | null },
   input: { planId: string },
 ): Promise<CreateSubscriptionResponse> {
+  requireSubscriptionsOnSale(deps, "subscribe");
   const { gateway, config } = requireGateway(deps);
   const m = await requireShop(deps, user.id, true);
   const plan = planById(input.planId);
@@ -463,6 +477,7 @@ export async function cancelSubscription(deps: BillingDeps, userId: string, atCy
 }
 
 export async function changePlan(deps: BillingDeps, userId: string, input: { planId: string }): Promise<ChangePlanResponse> {
+  requireSubscriptionsOnSale(deps, "change_plan");
   const { gateway, config } = requireGateway(deps);
   const m = await requireShop(deps, userId, true);
   const plan: PlanConfig | undefined = planById(input.planId);

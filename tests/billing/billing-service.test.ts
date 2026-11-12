@@ -61,7 +61,12 @@ beforeEach(async () => {
   gateway = new FakeGateway();
   const repo = new BillingRepository(db);
   await syncCatalog(repo, gateway);
-  deps = { repo, gateway, availability, config: { keyId: KEY_ID, keySecret: KEY_SECRET, webhookSecret: WEBHOOK_SECRET, mode: "test" } };
+  // Monthly plans are off sale (billingConfig.subscriptionsOnSale, tests/billing/subscriptions-blocked.test.ts);
+  // these tests cover the subscription lifecycle itself, for existing subscribers and a future relaunch.
+  deps = {
+    repo, gateway, availability, subscriptionsOnSale: true,
+    config: { keyId: KEY_ID, keySecret: KEY_SECRET, webhookSecret: WEBHOOK_SECRET, mode: "test" },
+  };
   const u = await createUser(pg);
   user = { id: u.userId, email: "owner@example.test" };
   shopId = u.shopId;

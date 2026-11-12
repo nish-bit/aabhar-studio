@@ -1,9 +1,26 @@
 -- Minimal stand-ins for the Supabase platform schemas, so the real
 -- migration can run inside PGlite for tests. Not used in production.
+-- Roles are cluster-wide, so test files that set up their own databases on one
+-- server in parallel can race: both see a role missing and both create it. The
+-- loser's CREATE ROLE fails with duplicate_object, or with unique_violation on
+-- pg_authid when the commits overlap. Only those two errors mean "another
+-- session created it"; anything else still fails the setup.
 do $$ begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
-  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin bypassrls; end if;
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    begin create role anon nologin;
+    exception when duplicate_object or unique_violation then null;
+    end;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    begin create role authenticated nologin;
+    exception when duplicate_object or unique_violation then null;
+    end;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    begin create role service_role nologin bypassrls;
+    exception when duplicate_object or unique_violation then null;
+    end;
+  end if;
 end $$;
 
 create schema if not exists auth;

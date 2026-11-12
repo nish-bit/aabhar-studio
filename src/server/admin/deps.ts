@@ -1,15 +1,14 @@
 import "server-only";
 
 import { revalidateTag } from "next/cache";
-import { after } from "next/server";
 
 import { billingConfigState } from "@/server/billing/config";
 import { invalidatePublicPricingCache } from "@/server/billing/public-pricing";
 import { database } from "@/server/db/postgres";
 import { supabaseAdmin } from "@/server/db/supabase-admin";
 import { generationDeps } from "@/server/generation/deps";
+import { dispatchGenerationJob } from "@/server/generation/dispatch";
 import { DomainError } from "@/server/generation/domain-error";
-import { runGenerationJob } from "@/server/generation/service";
 import { getImageProvider } from "@/server/providers/image/registry";
 
 import type { AdminDeps } from "./deps-types";
@@ -33,7 +32,10 @@ export function adminDeps(): AdminDeps {
           },
         }
       : null,
-    startJob: (jobId) => after(() => runGenerationJob(generationDeps(), jobId)),
+    // An admin retry always creates a new job, so a failed queue send may refund it at once.
+    startJob: async (jobId) => {
+      await dispatchGenerationJob(generationDeps(), jobId, { newJob: true });
+    },
     providerConfigured: provider !== null,
     provider: provider ? { id: provider.id, model: provider.model } : null,
     billingMode: billingConfigState().availability.mode,

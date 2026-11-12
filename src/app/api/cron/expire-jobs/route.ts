@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { serverEnv } from "@/server/env";
 import { generationDeps } from "@/server/generation/deps";
+import { DomainError } from "@/server/generation/domain-error";
+import { bearerTokenMatches } from "@/server/http/bearer";
 import { errorResponse, json } from "@/server/http/respond";
 
 /**
@@ -9,15 +9,16 @@ import { errorResponse, json } from "@/server/http/respond";
  * with `Authorization: Bearer $CRON_SECRET`.
  */
 export async function GET(req: Request) {
-  const secret = serverEnv().CRON_SECRET;
-  const header = req.headers.get("authorization") ?? "";
-  const expected = `Bearer ${secret ?? ""}`;
-  const ok =
-    !!secret &&
-    header.length === expected.length &&
-    timingSafeEqual(Buffer.from(header), Buffer.from(expected));
-  if (!ok) return errorResponse("unauthenticated", "Unauthorized.", 401);
+  if (!bearerTokenMatches(req, serverEnv().CRON_SECRET)) return errorResponse("unauthenticated", "Unauthorized.", 401);
 
-  const expired = await generationDeps().repo.expireStaleJobs();
+  let deps: ReturnType<typeof generationDeps>;
+  try {
+    deps = generationDeps();
+  } catch (err) {
+    // Storage isn't configured: 503, like /api/cron/retention. Anything else is a real error.
+    if (err instanceof DomainError && err.code === "storage_not_configured") return errorResponse(err.code, err.message, 503);
+    throw err;
+  }
+  const expired = await deps.repo.expireStaleJobs();
   return json({ expired });
 }

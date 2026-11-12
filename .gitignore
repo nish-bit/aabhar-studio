@@ -61,3 +61,6 @@ supabase/.temp/
 
 # TypeScript incremental build cache (rewritten by every build)
 *.tsbuildinfo
+
+# Temporary local database connection check (reads .env.local). Never commit.
+/scripts/test-db-connection.mjs

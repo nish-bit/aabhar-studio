@@ -70,7 +70,8 @@ function authErrorRedirect(request: NextRequest): NextResponse | null {
 }
 
 export const config = {
-  // Webhooks and cron authenticate with signatures/secrets, not cookies.
+  // Webhooks, cron and internal routes (queue consumer, selftest) authenticate
+  // with signatures/secrets, not cookies, so they skip the session refresh.
   // "/" only for Supabase Auth error redirects; it returns before any session work.
-  matcher: ["/", "/app/:path*", "/admin/:path*", "/admin", "/api/((?!webhooks/|cron/|health).*)", "/login"],
+  matcher: ["/", "/app/:path*", "/admin/:path*", "/admin", "/api/((?!webhooks/|cron/|internal/|health).*)", "/login"],
 };
