@@ -33,7 +33,12 @@ export function GoogleSignIn() {
 
   const signIn = async () => {
     const supabase = supabaseBrowser();
-    if (!supabase) return;
+    if (!supabase) {
+      // The NEXT_PUBLIC_SUPABASE_* values are compiled into the browser bundle at build time.
+      // Without them the button can't start sign-in; say so instead of silently doing nothing.
+      setError(loginErrorMessage("unavailable"));
+      return;
+    }
     setBusy(true);
     setError(null);
     rememberMarketingChoice(marketing);

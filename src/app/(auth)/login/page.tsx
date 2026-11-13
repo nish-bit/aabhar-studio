@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { connection } from "next/server";
 
 import { GoogleSignIn } from "@/components/auth/google-sign-in";
 import { Logo } from "@/components/shared/logo";
@@ -12,6 +13,10 @@ import { integrationStatus } from "@/server/env";
 export const metadata = { title: "Sign in", robots: { index: false } };
 
 export default async function LoginPage() {
+  // Render per request, not at build time: whether sign-in is configured depends on the
+  // runtime environment (on Cloudflare, SUPABASE_SECRET_KEY is a Worker secret that a
+  // Workers Builds build never sees, so a prerendered page always said "not connected").
+  await connection();
   const { supabase } = integrationStatus();
   const { pricing } = await getPublicPricing();
   return (
