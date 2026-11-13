@@ -96,10 +96,52 @@ export interface SupabaseConfig {
   secretKey: string;
 }
 
+export const SUPABASE_ENV_NAMES = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY"] as const;
+export type EnvPresence = "present" | "blank" | "missing";
+
+const presence = (v: unknown): EnvPresence =>
+  v === undefined || v === null ? "missing" : typeof v === "string" && v.trim() === "" ? "blank" : "present";
+
+/**
+ * Diagnostics only: whether each Supabase variable is present, blank (set to an empty or
+ * whitespace-only value, which counts as not set) or missing. In process.env (what the app
+ * reads) and, on Cloudflare Workers, in the Worker's env bindings. Never values or lengths.
+ */
+export function supabaseEnvPresence(): { processEnv: Record<string, EnvPresence>; workerEnv: Record<string, EnvPresence> | null } {
+  const processEnv = Object.fromEntries(SUPABASE_ENV_NAMES.map((n) => [n, presence(process.env[n])]));
+  let workerEnv: Record<string, EnvPresence> | null = null;
+  if (onWorkers) {
+    try {
+      const env = getCloudflareContext().env as unknown as Record<string, unknown>;
+      workerEnv = Object.fromEntries(SUPABASE_ENV_NAMES.map((n) => [n, presence(env[n])]));
+    } catch {
+      workerEnv = null; // outside a request
+    }
+  }
+  return { processEnv, workerEnv };
+}
+
+let reportedUnconfigured = false;
+/** Logged once per server instance (Workers isolate). Booleans and presence states only. */
+function reportSupabaseUnconfigured(env: ServerEnv) {
+  if (reportedUnconfigured || process.env.NODE_ENV === "test") return;
+  reportedUnconfigured = true;
+  console.warn(
+    JSON.stringify({
+      event: "auth.supabase_not_configured",
+      // What the app's parsed (and cached) configuration saw.
+      parsedByApp: Object.fromEntries(SUPABASE_ENV_NAMES.map((n) => [n, Boolean(env[n])])),
+      // What is there right now.
+      ...supabaseEnvPresence(),
+    }),
+  );
+}
+
 /** Returns null when Supabase isn't fully configured. */
 export function supabaseConfig(): SupabaseConfig | null {
   const env = serverEnv();
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || !env.SUPABASE_SECRET_KEY) {
+    reportSupabaseUnconfigured(env);
     return null;
   }
   return {
