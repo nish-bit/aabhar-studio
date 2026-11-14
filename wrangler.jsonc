@@ -77,5 +77,22 @@
   },
   "observability": {
     "enabled": true
+  },
+  // Worker Previews: non-main branches are deployed by Workers Builds with `npx wrangler preview`
+  // (not `opennextjs-cloudflare upload`, whose `wrangler versions upload` targets the production Worker).
+  // Bindings here are NOT inherited from the top level. Previews stay isolated from production:
+  // no Hyperdrive (production database), queues, WORKER_SELF_REFERENCE or other services, and no
+  // routes or crons (Previews can't have them). Secrets are separate (`wrangler preview secret`).
+  // tests/unit/wrangler-config.test.ts enforces this.
+  "previews": {
+    "vars": {
+      "NEXT_PUBLIC_SUPABASE_URL": "https://eguuncnkcjqmeatrpzcj.supabase.co",
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_l6NnIvtSOxTWgx48GaU7VA_ZE92nE5s",
+      "BILLING_LIVE_APPROVED": "false"
+    },
+    // Stateless image transformations for next/image; holds no data.
+    "images": {
+      "binding": "IMAGES"
+    }
   }
 }
