@@ -10,8 +10,9 @@ import { safeNextPath } from "@/lib/safe-redirect";
  * only — every route handler verifies the user again server-side.
  */
 export async function proxy(request: NextRequest) {
-  // The homepage is only matched so Supabase Auth errors land on the login page (see authErrorRedirect).
-  if (request.nextUrl.pathname === "/") return authErrorRedirect(request) ?? NextResponse.next();
+  // The homepage is only matched so Supabase Auth errors land on the login page (see authErrorRedirect),
+  // and a sign-in code that Supabase sent to the Site URL still reaches the callback (see stray code forwarding).
+  if (request.nextUrl.pathname === "/") return authErrorRedirect(request) ?? strayCodeForward(request) ?? NextResponse.next();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -69,9 +70,42 @@ function authErrorRedirect(request: NextRequest): NextResponse | null {
   return NextResponse.redirect(new URL(loginErrorPath(reason, "/app/dashboard"), request.url), { status: 303 });
 }
 
+/** Supabase PKCE auth codes are UUIDs; accept that shape (with some slack) and nothing else. */
+const AUTH_CODE = /^[A-Za-z0-9-]{8,128}$/;
+/** Fixed destination: Supabase already dropped the original `next` when it fell back to the Site URL. */
+const STRAY_CODE_DESTINATION = "/app/dashboard";
+
+/**
+ * When the redirect URL the app asked for isn't on Supabase's Redirect URLs allow-list,
+ * Supabase falls back to the Site URL root and appends ?code=…, so the code never reaches
+ * /auth/callback and the user stays signed out on the homepage. Forward it to the callback,
+ * which exchanges it exactly as usual: the code is single-use and only works together with
+ * the PKCE verifier cookie this browser set when the sign-in started, so this bypasses no
+ * check. Only a well-formed `code` with no OAuth `error` is forwarded (errors are handled by
+ * authErrorRedirect, which runs first). /auth/callback isn't matched by this proxy and never
+ * redirects to "/", so this can't loop. The fix for the cause is the Supabase allow-list;
+ * the warning says so and never includes the code.
+ */
+function strayCodeForward(request: NextRequest): NextResponse | null {
+  const params = request.nextUrl.searchParams;
+  if (params.has("error") || params.has("error_code") || params.has("error_description")) return null;
+  const code = params.get("code");
+  if (!code || params.getAll("code").length !== 1 || !AUTH_CODE.test(code)) return null;
+  console.warn(
+    JSON.stringify({
+      event: "auth.oauth_code_at_root",
+      detail: "Supabase returned the sign-in to the Site URL: add this site's /auth/callback to Authentication → URL Configuration → Redirect URLs.",
+    }),
+  );
+  const target = new URL("/auth/callback", request.url);
+  target.searchParams.set("code", code);
+  target.searchParams.set("next", safeNextPath(STRAY_CODE_DESTINATION));
+  return NextResponse.redirect(target, { status: 303 });
+}
+
 export const config = {
   // Webhooks, cron and internal routes (queue consumer, selftest) authenticate
   // with signatures/secrets, not cookies, so they skip the session refresh.
-  // "/" only for Supabase Auth error redirects; it returns before any session work.
+  // "/" only for Supabase Auth error redirects and stray sign-in codes; it returns before any session work.
   matcher: ["/", "/app/:path*", "/admin/:path*", "/admin", "/api/((?!webhooks/|cron/|internal/|health).*)", "/login"],
 };

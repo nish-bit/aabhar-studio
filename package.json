@@ -17,8 +17,8 @@
     "account:delete": "tsx --conditions=react-server scripts/delete-account.ts",
     "test:pg": "vitest run tests/pg",
     "preview": "node scripts/patch-pdfkit-workerd.mjs && node scripts/patch-yoga-workerd.mjs && opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "node scripts/patch-pdfkit-workerd.mjs && node scripts/patch-yoga-workerd.mjs && opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "node scripts/patch-pdfkit-workerd.mjs && node scripts/patch-yoga-workerd.mjs && opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "deploy": "node scripts/deploy-guard.mjs && node scripts/patch-pdfkit-workerd.mjs && node scripts/patch-yoga-workerd.mjs && opennextjs-cloudflare build && node scripts/deploy-guard.mjs --bundle && opennextjs-cloudflare deploy",
+    "upload": "node scripts/deploy-guard.mjs && node scripts/patch-pdfkit-workerd.mjs && node scripts/patch-yoga-workerd.mjs && opennextjs-cloudflare build && node scripts/deploy-guard.mjs --bundle && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
