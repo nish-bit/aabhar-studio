@@ -8,6 +8,7 @@ import type { JewelleryTypeId } from "@/lib/jewellery-types";
 import { cropBoxFor, photoSizeById, type PhotoSize, type PhotoSizeId } from "@/lib/photo-sizes";
 import { PRESETS, type PresetSlug } from "@/lib/presets";
 import { membershipOrOnboard } from "@/server/auth/ensure-shop";
+import { sanitizedError } from "@/server/logging";
 import { ProviderError, userMessageFor } from "@/server/providers/image/errors";
 import type { ImageEditProvider } from "@/server/providers/image/types";
 import { readImageHeader } from "@/server/imaging/header";
@@ -184,6 +185,8 @@ export async function submitGeneration(
     dailyLimit = plan.dailyGenerations;
   }
 
+  await releaseStaleJobs(deps);
+
   const result = await deps.repo.createJobWithDebit({
     userId,
     shopId: m.shopId,
@@ -210,6 +213,25 @@ export async function submitGeneration(
   }
 
   return result;
+}
+
+/**
+ * Fails and refunds jobs whose runner was lost (expire_stale_generation_jobs: a processing job
+ * whose lease has run out, or a queued job that never started within 10 minutes) before
+ * createJobWithDebit counts the shop's active jobs. Otherwise such a job keeps holding a slot
+ * (the trial's only one) until a status poll or the cron watchdog sweeps it, and locally
+ * (next dev: no cron) nothing might. Jobs with a valid lease are untouched; refunds stay keyed
+ * per job, so this, the poll and the cron can overlap safely. A failure here never blocks the
+ * submission: the limit is still enforced by createJobWithDebit, as before.
+ */
+async function releaseStaleJobs(deps: GenerationDeps): Promise<void> {
+  const log = deps.log ?? (() => undefined);
+  try {
+    const expired = await deps.repo.expireStaleJobs();
+    if (expired > 0) log("generation.stale_jobs_expired", { expired });
+  } catch (err) {
+    log("generation.expire_stale_failed", { error: sanitizedError(err) });
+  }
 }
 
 /**

@@ -215,11 +215,18 @@ export class FakeRepository implements GenerationRepository {
     }
     return true;
   }
+  /** Same rules as expire_stale_generation_jobs(): expired leases, and queued jobs that never started in 10 minutes. */
   async expireStaleJobs() {
     let n = 0;
     for (const j of this.jobs.values()) {
       if (j.status === "processing" && j.lockedUntil !== null && j.lockedUntil < this.now()) {
         if (await this.failJob(j.id, "timeout", "timed out", true)) n++;
+      }
+    }
+    const queuedBefore = this.now() - 10 * 60_000;
+    for (const j of this.jobs.values()) {
+      if (j.status === "queued" && Date.parse(j.createdAt) < queuedBefore) {
+        if (await this.failJob(j.id, "not_started", "never started", true)) n++;
       }
     }
     return n;

@@ -155,6 +155,63 @@ describe("generation migration (real SQL)", () => {
     expect(await balance(shopId)).toBe(2);
   });
 
+  describe("stale-job sweep (expire_stale_generation_jobs) and the concurrency limit of 1", () => {
+    const status = async (jobId: string) =>
+      (await db.query<{ status: string; error_code: string | null; refunded: boolean }>(
+        "select status, error_code, refunded from public.generation_jobs where id = $1", [jobId])).rows[0]!;
+    const refunds = async (jobId: string) =>
+      (await db.query<{ n: number }>("select count(*)::int as n from public.credit_ledger where job_id = $1 and entry_type = 'refund'", [jobId])).rows[0]!.n;
+    const sweep = () => db.query("select public.expire_stale_generation_jobs()");
+
+    it("fails and refunds a queued job that never started within 10 minutes, then a new job fits the limit", async () => {
+      const { userId, shopId } = await newUser();
+      const sourceId = await readySource(shopId, userId);
+      const old = (await createJob({ userId, shopId, sourceId, maxActive: 1 })).rows[0]!.r_job_id;
+      await db.query("update public.generation_jobs set created_at = now() - interval '11 minutes' where id = $1", [old]);
+      await expect(createJob({ userId, shopId, sourceId, maxActive: 1 })).rejects.toThrow(/too_many_active_jobs/); // the SQL alone still counts it
+
+      await sweep();
+      expect(await status(old)).toEqual({ status: "failed", error_code: "not_started", refunded: true });
+      await expect(createJob({ userId, shopId, sourceId, maxActive: 1 })).resolves.toBeTruthy();
+      expect(await balance(shopId)).toBe(1); // 2 − 1 + 1 (refund) − 1
+      expect(await ledgerSum(shopId)).toBe(1);
+    });
+
+    it("leaves a queued job younger than 10 minutes and a processing job with a valid lease alone", async () => {
+      const { userId, shopId } = await newUser();
+      const sourceId = await readySource(shopId, userId);
+      const queued = (await createJob({ userId, shopId, sourceId, maxActive: 2 })).rows[0]!.r_job_id;
+      await db.query("update public.generation_jobs set created_at = now() - interval '9 minutes' where id = $1", [queued]);
+      const running = (await createJob({ userId, shopId, sourceId, maxActive: 2 })).rows[0]!.r_job_id;
+      await db.query("update public.generation_jobs set created_at = now() - interval '30 minutes' where id = $1", [running]);
+      await db.query("select * from public.claim_generation_job($1, 295)", [running]); // lease valid for 295 s
+
+      await sweep();
+      expect((await status(queued)).status).toBe("queued");
+      expect((await status(running)).status).toBe("processing");
+      expect(await refunds(queued)).toBe(0);
+      expect(await refunds(running)).toBe(0);
+      expect(await balance(shopId)).toBe(0);
+    });
+
+    it("refunds an expired processing job exactly once across repeated sweeps and late failures", async () => {
+      const { userId, shopId } = await newUser();
+      const sourceId = await readySource(shopId, userId);
+      const jobId = (await createJob({ userId, shopId, sourceId, maxActive: 1 })).rows[0]!.r_job_id;
+      await db.query("select * from public.claim_generation_job($1, 295)", [jobId]);
+      await db.query("update public.generation_jobs set locked_until = now() - interval '1 second' where id = $1", [jobId]);
+
+      await sweep();
+      await sweep();
+      await db.query("select public.fail_generation_job($1, 'timeout', 'late', true)", [jobId]);
+      expect(await status(jobId)).toEqual({ status: "failed", error_code: "timeout", refunded: true });
+      expect(await refunds(jobId)).toBe(1);
+      expect(await balance(shopId)).toBe(2);
+      expect(await ledgerSum(shopId)).toBe(2);
+      await expect(createJob({ userId, shopId, sourceId, maxActive: 1 })).resolves.toBeTruthy();
+    });
+  });
+
   it("keeps the ledger append-only", async () => {
     const { shopId } = await newUser();
     await expect(db.query("update public.credit_ledger set amount = 999 where shop_id = $1", [shopId])).rejects.toThrow(/append-only/);
