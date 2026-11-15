@@ -15,6 +15,7 @@ import type {
 } from "@/lib/billing-types";
 import { ensureUserShop, membershipOrOnboard } from "@/server/auth/ensure-shop";
 import { DomainError, domainErrors } from "@/server/generation/domain-error";
+import { sanitizedError } from "@/server/logging";
 import { rewardReferral, reverseReferral } from "@/server/referrals/rewards";
 
 import type { RazorpayConfig } from "./config";
@@ -219,9 +220,19 @@ export async function createPackOrder(
   };
 }
 
-type PackOutcome = "granted" | "already_granted" | "not_captured" | "mismatch";
+type PackOutcome = "granted" | "already_granted" | "not_captured" | "mismatch" | "first_purchase_conflict";
 
-/** Grants a pack's credits for a captured payment that matches our order exactly. */
+/**
+ * Grants a pack's credits for a captured payment that matches our order exactly.
+ *
+ * First-purchase-only packs (the Starter Pack) are checked again here, at grant time,
+ * not only when the order is created: two orders opened before either was paid could
+ * otherwise both be paid and both granted. The check runs under a per-shop lock, so of
+ * two such payments settling at once exactly one is granted. A payment that loses keeps
+ * its record (captured, 0 credits), its order is marked paid so reconciliation stops
+ * retrying it, and billing.first_purchase_conflict is logged at error level so the
+ * payment can be refunded from the Razorpay Dashboard. No refund is started from here.
+ */
 async function applyPackPayment(deps: BillingDeps, order: OrderRow, payment: GatewayPayment): Promise<{ outcome: PackOutcome; credits: number }> {
   if (payment.order_id !== order.razorpayOrderId || payment.amount !== order.amountPaise || payment.currency !== "INR") {
     log(deps, "billing.pack_payment_mismatch", { order: order.razorpayOrderId, payment: payment.id, amount: payment.amount, expected: order.amountPaise });
@@ -241,6 +252,16 @@ async function applyPackPayment(deps: BillingDeps, order: OrderRow, payment: Gat
 
     // One grant per order, even if Razorpay ever reports a second captured payment for it.
     const key = `grant:order:${order.razorpayOrderId}`;
+    if (pack?.firstPurchaseOnly && !(await repo.grantByKey(key))) {
+      await repo.lockShopCredits(order.shopId);
+      if (await repo.hasOtherPaidPack(order.shopId, order.id)) {
+        await repo.markOrderPaid(order.id);
+        log(deps, "billing.first_purchase_conflict", {
+          order: order.razorpayOrderId, payment: payment.id, packId: order.packId, amountPaise: payment.amount, action: "refund_from_razorpay_dashboard",
+        });
+        return { outcome: "first_purchase_conflict" as const, credits: 0 };
+      }
+    }
     const expires = new Date(nowOf(deps).getTime() + order.validityDays * DAY_MS);
     const grantId = await repo.grantCredits({
       shopId: order.shopId, amount: order.credits, source: "pack", expiresAt: expires, key,
@@ -305,6 +326,13 @@ export async function verifyPackPayment(
     const payment = await captureAndConfirm(gateway, order, await gateway.fetchPayment(input.razorpay_payment_id));
     const r = await applyPackPayment(deps, order, payment);
     if (r.outcome === "mismatch") throw new DomainError("payment_failed", "This payment doesn't match the order. Contact support; no credits were added.", 400);
+    if (r.outcome === "first_purchase_conflict") {
+      throw new DomainError(
+        "conflict",
+        "The Starter Pack is only for your first purchase, so no credits were added for this payment. We'll refund it in full; contact support if you have any questions.",
+        409,
+      );
+    }
     if (r.outcome === "granted" || r.outcome === "already_granted") status = "confirmed";
     // Razorpay confirms the payment failed: say so (no credits). Authorized/created stay "pending".
     else if (payment.status === "failed") status = "failed";
@@ -691,6 +719,13 @@ async function processEvent(deps: BillingDeps, env: WebhookEnvelope, eventAt: Da
  * take back the matching share of that payment's credits from the grant it
  * created. Credits already spent can't be taken back; that shortfall is
  * recorded on the refund for review.
+ *
+ * Runs inside the webhook transaction. The payment row is locked before
+ * anything about earlier refunds is read, so two refunds of one payment
+ * (e.g. two partial refunds delivered at once, as separate events) are
+ * applied one after the other: the second sees the first's reversal and
+ * refunded total, and together they never take back more than the payment's
+ * share. The same refund delivered twice is likewise seen as processed.
  */
 async function handleRefund(
   deps: BillingDeps,
@@ -701,8 +736,11 @@ async function handleRefund(
   const refundId = String(refund.id);
   const paymentId = String(refund.payment_id ?? "");
   const amount = Number(refund.amount ?? 0);
-  const payment = await deps.repo.paymentByRazorpayId(paymentId);
-  if (!payment) return "refund_unknown_payment";
+  const found = await deps.repo.paymentByRazorpayId(paymentId);
+  if (!found) return "refund_unknown_payment";
+  await deps.repo.lockPayment(found.id);
+  // Re-read under the lock: a concurrent refund of this payment may have committed while we waited.
+  const payment = (await deps.repo.paymentByRazorpayId(paymentId)) ?? found;
 
   const status = event === "refund.processed" ? "processed" : event === "refund.failed" ? "failed" : "created";
   const existing = await deps.repo.refundByRazorpayId(refundId);
@@ -710,8 +748,15 @@ async function handleRefund(
   await deps.repo.upsertRefund({ shopId: payment.shopId, paymentId: payment.id, razorpayRefundId: refundId, amountPaise: amount, status });
   if (status !== "processed") return `refund_${status}`;
 
+  // Credits follow the refunds we have processed: earlier ones (read under the payment lock) plus this one,
+  // which upsertRefund has just recorded as processed. Razorpay's amount_refunded is the payment's total at
+  // the time the event was built, which can already include refunds whose own events haven't arrived; adding
+  // this refund to it would count those twice. It's used only for the displayed refunded amount. A refund
+  // whose event is late adds its own share when it arrives.
+  const refundedByUs = Math.min(payment.amountPaise, await deps.repo.processedRefundTotal(payment.id));
   const reportedTotal = paymentEntity ? Number(paymentEntity.amount_refunded ?? 0) : 0;
-  const totalRefunded = Math.min(payment.amountPaise, Math.max(reportedTotal, payment.amountRefundedPaise + amount));
+  const displayedTotal = Math.min(payment.amountPaise, Math.max(reportedTotal, payment.amountRefundedPaise, refundedByUs));
+  const totalRefunded = refundedByUs;
   const target = totalRefunded >= payment.amountPaise ? payment.creditsGranted : Math.floor((payment.creditsGranted * totalRefunded) / payment.amountPaise);
   const toReverse = Math.max(0, target - (await deps.repo.creditsAlreadyReversed(payment.id)));
 
@@ -721,7 +766,7 @@ async function handleRefund(
     ({ reversed, shortfall } = await deps.repo.reverseGrant(payment.grantId, toReverse, `refund:rzp:${refundId}`, "Payment refunded"));
   }
   await deps.repo.markRefundProcessed(refundId, reversed, shortfall);
-  await deps.repo.setPaymentRefunded(payment.id, totalRefunded);
+  await deps.repo.setPaymentRefunded(payment.id, displayedTotal);
   if (totalRefunded >= payment.amountPaise && (await reverseReferral(deps.repo, payment.id, `refund:rzp:${refundId}`))) {
     log(deps, "billing.referral_reversed", { paymentId: payment.id });
   }
@@ -736,20 +781,35 @@ async function handleRefund(
  * arrived by asking Razorpay directly.
  */
 export async function reconcileBilling(deps: BillingDeps): Promise<{ expired: number; ordersConfirmed: number }> {
-  const expired = await deps.repo.expireAllGrants();
-  let ordersConfirmed = 0;
-  if (deps.gateway) {
-    for (const order of await deps.repo.unpaidOrders(10, 72)) {
-      try {
-        const payments = await deps.gateway.fetchOrderPayments(order.razorpayOrderId);
-        const captured = payments.find((p) => p.status === "captured");
-        if (captured && (await applyPackPayment(deps, order, captured)).outcome === "granted") ordersConfirmed++;
-      } catch (err) {
-        log(deps, "billing.reconcile_order_failed", { order: order.razorpayOrderId, error: String(err) });
+  const startedAt = nowOf(deps);
+  const run = { expiredGrants: 0, ordersChecked: 0, ordersConfirmed: 0, ordersFailed: 0 };
+  let failure: unknown = null;
+  try {
+    run.expiredGrants = await deps.repo.expireAllGrants();
+    if (deps.gateway) {
+      for (const order of await deps.repo.unpaidOrders(10, 72)) {
+        run.ordersChecked++;
+        try {
+          const payments = await deps.gateway.fetchOrderPayments(order.razorpayOrderId);
+          const captured = payments.find((p) => p.status === "captured");
+          if (captured && (await applyPackPayment(deps, order, captured)).outcome === "granted") run.ordersConfirmed++;
+        } catch (err) {
+          run.ordersFailed++;
+          log(deps, "billing.reconcile_order_failed", { order: order.razorpayOrderId, error: String(err) });
+        }
       }
     }
+    return { expired: run.expiredGrants, ordersConfirmed: run.ordersConfirmed };
+  } catch (err) {
+    failure = err;
+    log(deps, "billing.reconcile_failed", { error: String(err) });
+    throw err;
+  } finally {
+    // For the admin billing health view. Never fails the run (e.g. before the migration is applied).
+    await deps.repo
+      .recordReconcileRun({ startedAt, ok: failure === null && run.ordersFailed === 0, ...run, error: failure === null ? null : sanitizedError(failure) })
+      .catch((err: unknown) => log(deps, "billing.reconcile_run_not_recorded", { error: String(err) }));
   }
-  return { expired, ordersConfirmed };
 }
 
 /* ---------------------------------------------------------- receipts */

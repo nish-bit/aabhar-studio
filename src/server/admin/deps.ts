@@ -6,6 +6,7 @@ import { billingConfigState } from "@/server/billing/config";
 import { invalidatePublicPricingCache } from "@/server/billing/public-pricing";
 import { database } from "@/server/db/postgres";
 import { supabaseAdmin } from "@/server/db/supabase-admin";
+import { serverEnv } from "@/server/env";
 import { generationDeps } from "@/server/generation/deps";
 import { dispatchGenerationJob } from "@/server/generation/dispatch";
 import { DomainError } from "@/server/generation/domain-error";
@@ -39,6 +40,8 @@ export function adminDeps(): AdminDeps {
     providerConfigured: provider !== null,
     provider: provider ? { id: provider.id, model: provider.model } : null,
     billingMode: billingConfigState().availability.mode,
+    paymentsEnabled: billingConfigState().availability.enabled,
+    webhookSecretConfigured: Boolean(serverEnv().RAZORPAY_WEBHOOK_SECRET),
     revalidatePlans: () => {
       revalidateTag(PLANS_CACHE_TAG, "max");
       // Public pricing keeps a short in-memory cache per server instance; drop this instance's copy now.

@@ -11,6 +11,10 @@ export interface AdminDeps {
   /** Provider id/model used for admin retries. */
   provider?: { id: string; model: string } | null;
   billingMode: "test" | "live" | null;
+  /** Razorpay keys present and allowed (billingConfigState().availability.enabled). */
+  paymentsEnabled?: boolean;
+  /** Whether RAZORPAY_WEBHOOK_SECRET is set. Only the yes/no ever leaves the server. */
+  webhookSecretConfigured?: boolean;
   /** Refreshes cached public pricing after a plan change. */
   revalidatePlans?: () => void;
   now?: () => Date;

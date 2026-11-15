@@ -6,6 +6,7 @@ import { DomainError } from "@/server/generation/domain-error";
 import { billingConfigState } from "./config";
 import { entitlementsLookup, type EntitlementsLookup } from "./entitlements";
 import { RazorpayGateway } from "./gateway";
+import { billingLog } from "./log";
 import { BillingRepository } from "./repository";
 import type { BillingDeps } from "./service";
 
@@ -19,7 +20,7 @@ export function billingDeps(): BillingDeps {
     gateway: config ? new RazorpayGateway(config.keyId, config.keySecret) : null,
     config,
     availability,
-    log: (event, data) => console.info(JSON.stringify({ event, ...data })),
+    log: billingLog,
   };
 }
 

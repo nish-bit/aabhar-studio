@@ -262,6 +262,29 @@ export class BillingRepository {
     return rows.length > 0;
   }
 
+  /**
+   * Has this shop paid for any credit pack other than this order (even if later refunded)?
+   * The grant-time check for first-purchase-only packs; call it holding lockShopCredits().
+   */
+  async hasOtherPaidPack(shopId: string, orderId: string): Promise<boolean> {
+    const rows = await this.db.query(
+      `select 1 from public.billing_payments
+        where shop_id = $1 and kind = 'pack' and status in ('captured', 'partially_refunded', 'refunded')
+          and order_id is distinct from $2::uuid
+        limit 1`,
+      [shopId, orderId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Serialises pack-grant decisions for one shop until the transaction ends (the same
+   * credit_balances row grant_credits locks, so the lock order is unchanged).
+   */
+  async lockShopCredits(shopId: string) {
+    await this.db.query(`select 1 from public.credit_balances where shop_id = $1 for update`, [shopId]);
+  }
+
   /** Has this shop paid for a credit pack (captured, and not fully refunded)? */
   async hasPackPurchase(shopId: string): Promise<boolean> {
     const rows = await this.db.query(
@@ -413,6 +436,14 @@ export class BillingRepository {
     );
   }
 
+  /**
+   * Row lock on a payment until the transaction ends. Refunds of one payment take it before
+   * reading what was already reversed, so concurrent partial refunds are applied one after another.
+   */
+  async lockPayment(paymentId: string) {
+    await this.db.query(`select 1 from public.billing_payments where id = $1 for update`, [paymentId]);
+  }
+
   async setPaymentRefunded(paymentId: string, amountRefundedPaise: number) {
     await this.db.query(
       `update public.billing_payments set amount_refunded_paise = greatest(amount_refunded_paise, $2),
@@ -440,6 +471,15 @@ export class BillingRepository {
          status = case when billing_refunds.status = 'processed' then 'processed' else excluded.status end`,
       [r.shopId, r.paymentId, r.razorpayRefundId, r.amountPaise, r.status],
     );
+  }
+
+  /** Sum of this payment's refunds already processed by us (each refund counted once, by its Razorpay id). */
+  async processedRefundTotal(paymentId: string): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      `select coalesce(sum(amount_paise), 0)::bigint as n from public.billing_refunds where payment_id = $1 and status = 'processed'`,
+      [paymentId],
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   async creditsAlreadyReversed(paymentId: string): Promise<number> {
@@ -552,6 +592,19 @@ export class BillingRepository {
 
   async markWebhookFailed(eventId: string, error: string) {
     await this.db.query(`update public.billing_webhook_events set last_error = $2 where event_id = $1`, [eventId, error.slice(0, 500)]);
+  }
+
+  /* ------------------------------------------------------ reconciliation */
+  /** One row per reconcileBilling run (admin billing health). Keeps 90 days. */
+  async recordReconcileRun(r: {
+    startedAt: Date; ok: boolean; expiredGrants: number; ordersChecked: number; ordersConfirmed: number; ordersFailed: number; error: string | null;
+  }) {
+    await this.db.query(
+      `insert into public.billing_reconcile_runs (started_at, ok, expired_grants, orders_checked, orders_confirmed, orders_failed, error)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [r.startedAt.toISOString(), r.ok, r.expiredGrants, r.ordersChecked, r.ordersConfirmed, r.ordersFailed, r.error],
+    );
+    await this.db.query(`delete from public.billing_reconcile_runs where finished_at < now() - interval '90 days'`);
   }
 
   /* ----------------------------------------------------------- receipts */
