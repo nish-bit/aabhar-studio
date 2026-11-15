@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, LogOut, Mail } from "lucide-react";
 
+import { SignOutForm } from "@/components/auth/sign-out-form";
 import { FreeTrialStatus } from "@/components/billing/free-trial-status";
 import { MarketingPreferencesForm } from "@/components/settings/marketing-preferences-form";
 import { IntegrationNotice } from "@/components/studio/integration-notice";
@@ -106,12 +107,12 @@ async function Gate() {
           <div className="grid gap-1 py-4 sm:grid-cols-[180px_1fr] sm:gap-4">
             <dt className="text-body-sm font-medium text-ink-700">Sign out</dt>
             <dd>
-              <form action="/auth/sign-out" method="post">
+              <SignOutForm>
                 <Button type="submit" variant="secondary" size="sm">
                   <LogOut aria-hidden />
                   Sign out
                 </Button>
-              </form>
+              </SignOutForm>
             </dd>
           </div>
         </dl>

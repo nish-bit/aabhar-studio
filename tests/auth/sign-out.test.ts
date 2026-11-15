@@ -18,7 +18,7 @@ beforeEach(() => {
 describe("sign out", () => {
   it("ends the session first, then redirects to the homepage", async () => {
     signOut.mockResolvedValue({ error: null });
-    const res = await post({ origin: ORIGIN });
+    const res = await post({ origin: ORIGIN, cookie: "sb-abc123-auth-token=x" });
     expect(signOut).toHaveBeenCalledOnce();
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe(`${ORIGIN}/`);
@@ -34,8 +34,23 @@ describe("sign out", () => {
   });
 
   it("refuses cross-site and Origin-less requests, without signing anyone out", async () => {
-    expect((await post({ origin: "https://evil.example" })).status).toBe(403);
-    expect((await post({})).status).toBe(403);
+    expect((await post({ origin: "https://evil.example", cookie: "sb-abc123-auth-token=x" })).status).toBe(403);
+    expect((await post({ cookie: "sb-abc123-auth-token=x" })).status).toBe(403);
     expect(signOut).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: a repeated sign-out with no session left goes home without calling Supabase", async () => {
+    signOut.mockResolvedValue({ error: null });
+    // First submit ends the session; the browser then holds no Supabase cookies.
+    expect((await post({ origin: ORIGIN, cookie: "sb-abc123-auth-token=x; theme=dark" })).status).toBe(303);
+    // Double click / second tab / Back + resubmit.
+    for (let i = 0; i < 3; i++) {
+      const res = await post({ origin: ORIGIN, cookie: "theme=dark" });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`${ORIGIN}/`);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    }
+    expect(signOut).toHaveBeenCalledOnce();
+    expect(console.warn).not.toHaveBeenCalled();
   });
 });

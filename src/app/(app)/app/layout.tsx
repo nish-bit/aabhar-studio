@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LogOut } from "lucide-react";
 
 import { AppNav, AppNavFallback } from "@/components/app/app-nav";
+import { SignOutForm } from "@/components/auth/sign-out-form";
 import { brand } from "@/content/marketing";
 import { isAccountDisabled } from "@/server/auth/account-status";
 import { getSessionUser } from "@/server/auth/session";
@@ -25,15 +26,15 @@ export default function AppLayout({
             <span className="truncate font-serif text-heading-md font-semibold uppercase tracking-[0.18em] text-ink-900">{brand.name}</span>
             <span className="mt-1 text-[0.625rem] font-semibold uppercase tracking-[0.3em] text-gold-700">Jewellery studio</span>
           </Link>
-          <form action="/auth/sign-out" method="post">
+          <SignOutForm>
             <button
               type="submit"
-              className="flex items-center gap-2 rounded-sm px-3 py-2 text-body-sm font-medium uppercase tracking-[0.08em] text-ink-700 transition-colors hover:bg-ink-100 hover:text-ink-900"
+              className="flex items-center gap-2 rounded-sm px-3 py-2 text-body-sm font-medium uppercase tracking-[0.08em] text-ink-700 transition-colors hover:bg-ink-100 hover:text-ink-900 disabled:opacity-60"
             >
               <LogOut className="size-4" aria-hidden />
               Sign out
             </button>
-          </form>
+          </SignOutForm>
         </div>
       </header>
 
