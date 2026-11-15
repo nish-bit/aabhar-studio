@@ -19,7 +19,8 @@ export const PRICING_STALE_MAX_MS = 24 * 60 * 60_000;
 /**
  * - database: read just now
  * - cache:    a read from the last PRICING_CACHE_TTL_MS
- * - stale:    the database is unavailable; last good read (younger than PRICING_STALE_MAX_MS)
+ * - stale:    the last good read (younger than PRICING_STALE_MAX_MS) while a fresh one runs in the
+ *             background or the database is unavailable
  * - config:   no usable read; src/config/billing.ts as is
  */
 export type PricingSource = "database" | "cache" | "stale" | "config";
@@ -45,10 +46,14 @@ interface Overrides {
  * from the visitor's nearest Cloudflare edge to the project's region, so
  * together they take ~1–1.5 s and sometimes more than DB_BUDGET_MS, which
  * logged `pricing.overrides_unavailable` on every slow render. Results are now
- * cached; concurrent renders share one read; after a failure the next attempt
- * waits PRICING_RETRY_AFTER_FAILURE_MS (so pages don't keep waiting 2 s); and
- * the last good read is served while the database is unavailable.
- * invalidatePublicPricingCache() runs after admin plan/trial changes.
+ * cached; concurrent renders share one read (logged once if it fails); after a
+ * failure the next attempt waits PRICING_RETRY_AFTER_FAILURE_MS (so pages don't
+ * keep waiting 2 s); and once a good read exists, no render waits for the
+ * database again: an expired entry is served at once while one background read
+ * refreshes it (stale-while-revalidate), and it keeps being served while the
+ * database is unavailable. Only a cold instance (no good read yet) waits, at
+ * most DB_BUDGET_MS. invalidatePublicPricingCache() runs after admin plan/trial
+ * changes.
  */
 export async function getPublicPricing() {
   const { overrides, source } = await currentOverrides();
@@ -80,22 +85,50 @@ export function invalidatePublicPricingCache() {
 async function currentOverrides(): Promise<{ overrides: Overrides | null; source: PricingSource }> {
   const now = Date.now();
   if (good && now - good.at < PRICING_CACHE_TTL_MS) return { overrides: good.overrides, source: "cache" };
-  if (now - lastFailureAt < PRICING_RETRY_AFTER_FAILURE_MS) return fallback(now);
+  const mayRead = now - lastFailureAt >= PRICING_RETRY_AFTER_FAILURE_MS;
 
-  const startedIn = generation;
-  const read = (inflight ??= readWithBudget().finally(() => {
-    if (inflight === read) inflight = null;
-  }));
+  if (good && now - good.at < PRICING_STALE_MAX_MS) {
+    // Serve the last good overrides now; refresh them for the next render without making this one wait.
+    if (mayRead) sharedRead().catch(() => {}); // failures are recorded and logged inside sharedRead
+    return { overrides: good.overrides, source: "stale" };
+  }
+  if (!mayRead) return fallback(now);
+
+  // Cold instance (or the last good read is too old): wait, at most DB_BUDGET_MS.
   try {
-    const overrides = await read;
+    const overrides = await sharedRead();
     if (!overrides) return { overrides: null, source: "config" }; // nothing configured (e.g. local dev without Supabase)
-    if (startedIn === generation) good = { overrides, at: Date.now() };
     return { overrides, source: "database" };
-  } catch (err) {
-    if (startedIn === generation) lastFailureAt = Date.now();
-    console.error(JSON.stringify({ event: "pricing.overrides_unavailable", error: String(err).slice(0, 300) }));
+  } catch {
     return fallback(Date.now());
   }
+}
+
+/**
+ * The one read in flight, shared by every render (and background refresh) that needs it. It
+ * records its own outcome (cache entry or failure time) and logs a failure once, however many
+ * renders were waiting for it.
+ */
+function sharedRead(): Promise<Overrides | null> {
+  if (inflight) return inflight;
+  const startedIn = generation;
+  const read: Promise<Overrides | null> = readWithBudget()
+    .then(
+      (overrides) => {
+        if (overrides && startedIn === generation) good = { overrides, at: Date.now() };
+        return overrides;
+      },
+      (err: unknown) => {
+        if (startedIn === generation) lastFailureAt = Date.now();
+        console.error(JSON.stringify({ event: "pricing.overrides_unavailable", error: String(err).slice(0, 300) }));
+        throw err;
+      },
+    )
+    .finally(() => {
+      if (inflight === read) inflight = null;
+    });
+  inflight = read;
+  return read;
 }
 
 function fallback(now: number): { overrides: Overrides | null; source: PricingSource } {
