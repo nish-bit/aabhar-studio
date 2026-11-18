@@ -98,7 +98,20 @@ export function useBilling(initial: BillingOverview) {
           return;
         }
         setCheckout({ phase: "verifying", label });
-        const v = await verify(result);
+        // Checkout success is not proof of capture, but a verification API/network
+        // failure is not proof of payment failure either. Keep checking billing
+        // history rather than telling a potentially charged customer to retry.
+        let v: Awaited<ReturnType<typeof verify>>;
+        try {
+          v = await verify(result);
+        } catch {
+          setCheckout({
+            phase: "pending",
+            message: "Checkout reported success, but we couldn't confirm the payment yet. We're checking your billing history. Please don't pay again until its status is clear.",
+          });
+          void pollUntilConfirmed(result.response.razorpay_payment_id);
+          return;
+        }
         if (v.status === "confirmed") {
           setCheckout({
             phase: "success",
