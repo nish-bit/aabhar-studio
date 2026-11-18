@@ -3,10 +3,64 @@
 Plans, credit packs, a credit ledger and server-enforced plan limits, paid
 through Razorpay Subscriptions (monthly plans) and Orders (one-time packs).
 
-> **Status: test mode only.** Live keys are refused unless
+> **Status: live payments require explicit approval.** Live keys are refused unless
 > `BILLING_LIVE_APPROVED=true`. Prices are placeholders marked
 > "Indicative" until `billingConfig.pricesApproved = true`. Nothing here has
 > been run against Razorpay's real sandbox yet; that's the first step below.
+
+---
+
+## Production credit-pack readiness (November 2026)
+
+**Credit packs are the only products currently on sale.** The subscription
+flow is intentionally disabled by `billingConfig.subscriptionsOnSale = false`.
+Do not turn it on merely to enable the Buy buttons.
+
+If the Plans page says **"Live payments are switched off until the billing
+configuration is approved"**, the live Razorpay key is detected, but
+`BILLING_LIVE_APPROVED` is still `false`. This is an intentional real-money
+safety gate, not a checkout JavaScript error. Do **not** bypass it.
+
+Before approving production activation:
+
+1. Confirm Razorpay Live Mode activation and approval of the displayed pack
+   prices (₹249, ₹1,499, ₹3,999, ₹19,999), GST treatment, refund policy,
+   and seller details. `pricesApproved` is currently false and the receipt
+   seller fields are empty. A payment receipt is **not** a GST tax invoice.
+2. Configure the production Worker's `RAZORPAY_KEY_ID`,
+   `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` as secrets.
+   Never put the secret values in GitHub or `wrangler.jsonc`.
+3. Register a **Live Mode** Razorpay webhook at
+   `https://aabharstudio.com/api/webhooks/razorpay` with the matching
+   webhook secret and the relevant payment/refund events listed below.
+4. Confirm Cloudflare's `HYPERDRIVE` binding connects to the intended
+   production database. Workers do not use `DATABASE_URL` directly.
+5. Safest pack-only synchronization (avoids creating unused subscription
+   plans in Razorpay):
+
+   ```bash
+   npm run billing:sync -- --packs-only
+   npm run billing:sync -- --packs-only --apply
+   ```
+
+   Run from a trusted machine with `DATABASE_URL` targeting the intended
+   database; first command previews changes, second writes. This sync does
+   **not** need Razorpay keys and does **not** touch subscription prices.
+6. After explicit production billing approval, change the reviewed
+   `BILLING_LIVE_APPROVED` setting to `true`, deploy, and confirm the
+   deployed Worker version and the shop owner's purchase permission.
+7. Perform a controlled live purchase and verify captured payment, webhook
+   delivery, billing history, and the exact credit balance change. Check
+   scheduled billing reconciliation and `CRON_SECRET` too.
+
+If all Buy buttons are disabled, the UI intentionally requires both
+`overview.availability.enabled` and `overview.canManage`. The billing page
+shows the availability reason and a shop-owner-only notice. Do not remove
+these safeguards to make buttons clickable.
+
+**Operational boundary:** GitHub code changes cannot inspect or modify
+Cloudflare secrets, Razorpay account activation, production database contents,
+or actual webhook deliveries without separate authorized access.
 
 ---
 
@@ -16,7 +70,7 @@ Everything lives in **`src/config/billing.ts`**:
 
 | Setting | Current placeholder | Notes |
 |---|---|---|
-| Trial | 3 credits, valid 30 days | Synced to `billing_settings`; applies to new sign-ups only |
+| Trial | 2 credits, valid 30 days | Synced to `billing_settings`; applies to new sign-ups only |
 | Starter / Growth / Premium | ₹999 / ₹2,499 / ₹6,999 a month · 100 / 300 / 1,000 credits | **Not on sale** (removed from the site 3 Nov 2026). Config and backend kept so any existing subscription keeps working; there were none |
 | Pack holders | All six styles; 25 catalogues × 100 products, 300 images/day, 3 at once (`packLimits`) | Applies once a shop has a captured pack payment |
 | Plan limits | concurrency, per-day, catalogues, products per catalogue, styles | Enforced server-side |
