@@ -77,12 +77,15 @@ export async function openCheckout(options: CheckoutOptions): Promise<CheckoutRe
       ...options,
       theme: { color: "#8a6a2f" },
       handler: (response: CheckoutSuccess) => {
+        if (settled) return;
         settled = true;
         resolve({ kind: "success", response });
       },
       modal: {
         ondismiss: () => {
-          if (!settled) resolve({ kind: "dismissed", lastError });
+          if (settled) return;
+          settled = true;
+          resolve({ kind: "dismissed", lastError });
         },
         confirm_close: true,
       },
