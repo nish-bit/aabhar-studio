@@ -8,8 +8,8 @@
  * price creates a new Razorpay Plan; existing subscribers stay on their old
  * price until they change plan.
  *
- * STATUS: prices below are placeholders awaiting your approval. The pricing
- * page shows "Indicative pricing" while `pricesApproved` is false.
+ * STATUS: credit-pack prices approved by the business on 18 Nov 2026,
+ * inclusive of 18% GST. Live payment activation remains separately gated.
  */
 
 export type PlanId = "trial" | "starter" | "growth" | "premium";
@@ -68,8 +68,8 @@ export const FREE_TRIAL_LIMIT = TRIAL.credits;
 
 export const billingConfig = {
   currency: "INR" as const,
-  /** Flip to true once you approve these prices; removes the "indicative" label. */
-  pricesApproved: false,
+  /** Approved credit-pack prices, inclusive of 18% GST. Live activation has a separate guard. */
+  pricesApproved: true,
 
   /**
    * Monthly plans were taken off sale on 3 Nov 2026 (credit packs replaced
