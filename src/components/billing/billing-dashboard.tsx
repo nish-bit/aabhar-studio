@@ -132,6 +132,13 @@ export function BillingDashboard({ initial, focusPackId, children }: BillingDash
             Available: <strong className="tabular text-ink-900">{formatCount(overview.balance)}</strong> {overview.balance === 1 ? "credit" : "credits"}
           </p>
         </div>
+        {!canPay && (
+          <p role="status" className="rounded-md border border-gold-200 bg-gold-50 px-4 py-3 text-body-sm text-ink-800">
+            {!enabled
+              ? overview.availability.reason ?? "Payments are unavailable. Please contact support before trying to purchase credits."
+              : "Only the shop owner can purchase credits. Sign in with the shop owner's account to continue."}
+          </p>
+        )}
         <PackPlans
           packs={packs}
           action={(pack) => (
