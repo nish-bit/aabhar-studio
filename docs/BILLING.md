@@ -4,9 +4,38 @@ Plans, credit packs, a credit ledger and server-enforced plan limits, paid
 through Razorpay Subscriptions (monthly plans) and Orders (one-time packs).
 
 > **Status: live payments require explicit approval.** Live keys are refused unless
-> `BILLING_LIVE_APPROVED=true`. Prices are placeholders marked
-> "Indicative" until `billingConfig.pricesApproved = true`. Nothing here has
-> been run against Razorpay's real sandbox yet; that's the first step below.
+> `BILLING_LIVE_APPROVED=true`. The four credit-pack prices were approved
+> on 18 Nov 2026, inclusive of 18% GST (`pricesApproved=true`).
+> Live checkout, webhook delivery, invoicing and credit allocation still
+> require production verification.
+
+---
+
+## Missing business information — do not invent or publish as verified
+
+As of 18 Nov 2026, `src/config/billing.ts` still has empty receipt seller
+fields: `legalName`, `address`, `gstin`, and `email`. The GitHub
+repository and payment setup screenshots do **not** establish these values.
+Do not copy details from another business or assume a GST registration.
+
+Before live launch, the business owner must supply and verify:
+- Exact legal seller name as registered with Razorpay and tax records
+- Registered billing address and customer-facing support email
+- GSTIN if registered, or an explicit determination that it is not applicable
+- Customer-facing refund/cancellation policy and effective date
+- Tax-invoice process, including invoice numbering and required particulars,
+  reviewed by the responsible accountant
+
+Once supplied, enter the verified seller fields in
+`billingConfig.receipts.seller` and review the public policy pages.
+The current payment receipt is **not** a GST tax invoice; completing
+seller fields alone does not implement compliant GST invoicing.
+
+**Deployment caution:** Production Cloudflare currently shows
+`BILLING_LIVE_APPROVED=false`. Keep it false until these details,
+the webhook delivery test, and a controlled live payment plan are approved.
+
+**Published by Shadab Ali**
 
 ---
 
@@ -24,9 +53,9 @@ safety gate, not a checkout JavaScript error. Do **not** bypass it.
 Before approving production activation:
 
 1. Confirm Razorpay Live Mode activation and approval of the displayed pack
-   prices (₹249, ₹1,499, ₹3,999, ₹19,999), GST treatment, refund policy,
-   and seller details. `pricesApproved` is currently false and the receipt
-   seller fields are empty. A payment receipt is **not** a GST tax invoice.
+   prices (₹249, ₹1,499, ₹3,999, ₹19,999) and inclusive 18% GST
+   were approved on 18 Nov 2026. Refund policy and seller details still
+   require business confirmation; the receipt seller fields are empty. A payment receipt is **not** a GST tax invoice.
 2. Configure the production Worker's `RAZORPAY_KEY_ID`,
    `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` as secrets.
    Never put the secret values in GitHub or `wrangler.jsonc`.
