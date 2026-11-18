@@ -9,10 +9,12 @@ import { RazorpayGateway } from "./gateway";
 import { BillingRepository } from "./repository";
 import type { BillingDeps } from "./service";
 
-/** Production wiring. Needs DATABASE_URL; Razorpay keys are optional (billing shows "not connected"). */
+/** Production wiring. Workers use the HYPERDRIVE binding; local Node uses DATABASE_URL.
+ * Razorpay keys are optional (billing shows "not connected").
+ */
 export function billingDeps(): BillingDeps {
   const db = database();
-  if (!db) throw new DomainError("storage_not_configured", "Billing needs DATABASE_URL to be configured.", 503);
+  if (!db) throw new DomainError("storage_not_configured", "Billing database is not connected. Configure Cloudflare Hyperdrive in production or DATABASE_URL locally.", 503);
   const { config, availability } = billingConfigState();
   return {
     repo: new BillingRepository(db),
