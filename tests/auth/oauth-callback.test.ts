@@ -62,8 +62,16 @@ describe("Google sign-in callback", () => {
   it("flow started in another browser or expired: tells the user to retry here", async () => {
     exchangeCodeForSession.mockResolvedValue({ data: {}, error: { code: "flow_state_not_found", status: 404, message: "invalid flow state" } });
     expect((await callback("code=x")).error).toBe("expired");
-    exchangeCodeForSession.mockResolvedValue({ data: {}, error: { status: 400, message: "both auth code and code verifier should be non-empty" } });
+    exchangeCodeForSession.mockResolvedValue({ data: {}, error: { code: "flow_state_expired", status: 400, message: "flow state has expired" } });
     expect((await callback("code=x")).error).toBe("expired");
+    // supabase-js reports a missing verifier cookie with this code (AuthPKCECodeVerifierMissingError).
+    exchangeCodeForSession.mockResolvedValue({ data: {}, error: { code: "pkce_code_verifier_not_found", status: 400, message: "PKCE code verifier not found in storage." } });
+    expect((await callback("code=x")).error).toBe("expired");
+  });
+
+  it("expiry comes from the error code only: a message mentioning the verifier is not enough", async () => {
+    exchangeCodeForSession.mockResolvedValue({ data: {}, error: { status: 400, message: "both auth code and code verifier should be non-empty" } });
+    expect((await callback("code=x")).error).toBe("failed");
   });
 
   it("Supabase not configured: unavailable", async () => {

@@ -1,10 +1,26 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { fmtDate, fmtDateTime, fmtInr } from "@/components/admin/format";
-import { AdminPageHeader, DataTable, EmptyState, FilterBar, ModeBadge, Mono, Pagination, StatusBadge, Th } from "@/components/admin/primitives";
+import {
+  AdminPageHeader,
+  DataTable,
+  EmptyState,
+  Facts,
+  FilterBar,
+  ModeBadge,
+  Mono,
+  Pagination,
+  Section,
+  Stat,
+  StatGrid,
+  StatusBadge,
+  Th,
+} from "@/components/admin/primitives";
 import { one, parseFilters, type RawSearchParams } from "@/components/admin/search-params";
 import { billingConfig, planById } from "@/config/billing";
 import {
+  getBillingHealth,
   listPayments,
   listSubscriptions,
   listWebhookEvents,
@@ -18,6 +34,7 @@ import { cn } from "@/lib/utils";
 export const metadata = { title: "Payments" };
 
 const TABS = [
+  { id: "health", label: "Health" },
   { id: "payments", label: "Payments" },
   { id: "subscriptions", label: "Subscriptions" },
   { id: "webhooks", label: "Webhook events" },
@@ -52,6 +69,7 @@ export default async function AdminBilling({ searchParams }: { searchParams: Pro
           </Link>
         ))}
       </nav>
+      {tab === "health" && <Health deps={deps} admin={admin} />}
       {tab === "payments" && <Payments sp={sp} deps={deps} admin={admin} />}
       {tab === "subscriptions" && <Subscriptions sp={sp} deps={deps} admin={admin} />}
       {tab === "webhooks" && <Webhooks sp={sp} deps={deps} admin={admin} />}
@@ -60,6 +78,76 @@ export default async function AdminBilling({ searchParams }: { searchParams: Pro
 }
 
 type P = { sp: RawSearchParams } & Awaited<ReturnType<typeof adminPage>>;
+
+const yesNo = (v: boolean) => <StatusBadge status={v ? "active" : "failed"} label={v ? "Yes" : "No"} />;
+
+async function Health({ deps, admin }: Omit<P, "sp">) {
+  const h = await getBillingHealth(deps, admin);
+  const run = h.lastReconcileRun;
+  return (
+    <div className="space-y-6">
+      <Section title="Razorpay connection">
+        <Facts
+          items={[
+            ["Payments enabled", yesNo(h.paymentsEnabled)],
+            ["Mode", <ModeBadge key="mode" mode={h.mode} />],
+            ["Webhook secret configured", yesNo(h.webhookSecretConfigured)],
+            ["Checked", fmtDateTime(h.checkedAt)],
+          ]}
+        />
+      </Section>
+      <Section title="Webhooks">
+        <StatGrid>
+          <Stat
+            label="Last processed"
+            value={h.lastProcessedWebhook ? fmtDateTime(h.lastProcessedWebhook.processedAt) : "Never"}
+            hint={h.lastProcessedWebhook ? `${h.lastProcessedWebhook.eventType} · ${h.lastProcessedWebhook.outcome ?? "processed"}` : "No event has been processed yet."}
+          />
+          <Stat label="Failing" value={h.webhooks.failed} tone={h.webhooks.failed > 0 ? "error" : undefined} hint="Last attempt errored; Razorpay retries." />
+          <Stat label="Not processed yet" value={h.webhooks.pending} tone={h.webhooks.pending > 0 ? "warning" : undefined} hint={h.webhooks.oldestUnprocessedAt ? `Oldest received ${fmtDateTime(h.webhooks.oldestUnprocessedAt)}` : undefined} />
+        </StatGrid>
+      </Section>
+      <Section title="Unpaid orders older than one hour">
+        <StatGrid>
+          <Stat label="Unpaid > 1 hour" value={h.unpaidOrders.olderThanOneHour} hint="Mostly abandoned checkouts." />
+          <Stat label="Still being reconciled" value={h.unpaidOrders.withinReconcileWindow} hint="Created in the last 72 hours; checked with Razorpay hourly." />
+        </StatGrid>
+        {h.unpaidOrders.recent.length > 0 && (
+          <DataTable label="Most recent unpaid orders" minWidth={640} head={<><Th>Created</Th><Th>Order</Th><Th>Pack</Th><Th>Amount</Th><Th>Mode</Th></>}>
+            {h.unpaidOrders.recent.map((o) => (
+              <tr key={o.razorpayOrderId}>
+                <td className="tabular">{fmtDateTime(o.createdAt)}</td>
+                <td><Mono>{o.razorpayOrderId}</Mono></td>
+                <td>{o.packId}</td>
+                <td className="tabular">{fmtInr(o.amountPaise)}</td>
+                <td><ModeBadge mode={o.mode} /></td>
+              </tr>
+            ))}
+          </DataTable>
+        )}
+      </Section>
+      <Section title="Last reconciliation run">
+        {run === "unavailable" ? (
+          <EmptyState title="Run history isn't available yet">Apply migration 20261115000100_billing_reconcile_runs.sql to record runs.</EmptyState>
+        ) : run === null ? (
+          <EmptyState title="No run recorded yet">The hourly billing cron (17 * * * *) records each run here.</EmptyState>
+        ) : (
+          <Facts
+            items={[
+              ["Finished", fmtDateTime(run.finishedAt)],
+              ["Result", <StatusBadge key="r" status={run.ok ? "processed" : "failed"} label={run.ok ? "OK" : "Problems"} />],
+              ["Expired credit lots", run.expiredGrants],
+              ["Orders checked", run.ordersChecked],
+              ["Orders confirmed", run.ordersConfirmed],
+              ["Orders that couldn't be checked", run.ordersFailed],
+              ...(run.error ? ([["Error", run.error]] as [string, ReactNode][]) : []),
+            ]}
+          />
+        )}
+      </Section>
+    </div>
+  );
+}
 
 async function Payments({ sp, deps, admin }: P) {
   const f = parseFilters(paymentFilterSchema, sp);

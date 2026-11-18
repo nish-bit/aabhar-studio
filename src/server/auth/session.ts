@@ -2,6 +2,7 @@ import "server-only";
 
 import { connection } from "next/server";
 
+import { isSignedOutError } from "@/lib/auth-errors";
 import { supabaseForRequest } from "@/server/db/supabase-server";
 
 export interface SessionUser {
@@ -11,6 +12,9 @@ export interface SessionUser {
   name?: string | null;
 }
 
+/** Auth errors that mean "there is no valid session", as opposed to an outage (shared with the proxy). */
+export { isSignedOutError };
+
 /**
  * The verified current user, or null. Uses getUser(), which validates the
  * token with Supabase Auth rather than trusting the cookie contents.
@@ -19,21 +23,15 @@ export interface SessionUser {
  * request-time with connection() first. Supabase Auth reads the clock
  * (token expiry), which Cache Components refuses during prerendering.
  */
-/** Auth errors that mean "there is no valid session", as opposed to an outage. */
-export function isSignedOutError(error: { name?: string; status?: number }): boolean {
-  if (error.name === "AuthSessionMissingError") return true;
-  return typeof error.status === "number" && error.status >= 400 && error.status < 500 && error.status !== 429;
-}
-
 export async function getSessionUser(): Promise<SessionUser | null> {
   await connection();
   const supabase = await supabaseForRequest();
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getUser();
   if (error) {
-    // No session, or an invalid/expired one: signed out.
+    // A known missing, expired or revoked session: signed out.
     if (isSignedOutError(error)) return null;
-    // Supabase unreachable, rate-limited or failing: not the same as signed out.
+    // Anything else (unreachable, rate-limited, failing, misconfigured, unknown): not the same as signed out.
     // Treating it as signed out sends pages to /login while the proxy (whose own
     // check succeeded) sends /login back, a redirect loop. Fail loudly instead;
     // the page's error boundary offers "Try again". Never log tokens.

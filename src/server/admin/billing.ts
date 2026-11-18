@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { AdminLedgerRow, AdminPaymentRow, AdminSubscriptionRow, AdminWebhookRow, Page } from "@/lib/admin-types";
+import type { AdminBillingHealth, AdminLedgerRow, AdminPaymentRow, AdminSubscriptionRow, AdminWebhookRow, Page } from "@/lib/admin-types";
 import { iso } from "@/server/billing/repository";
 
 import type { AdminDeps } from "./deps-types";
@@ -148,6 +148,78 @@ export async function listWebhookEvents(deps: AdminDeps, _ctx: AdminContext, f: 
     page,
     pageSize,
     total: count[0]?.n ?? 0,
+  };
+}
+
+/* --------------------------------------------------------------- health */
+
+const isMissingTable = (err: unknown) =>
+  (err as { code?: unknown } | null)?.code === "42P01" || /relation .*billing_reconcile_runs.* does not exist/i.test(String(err));
+
+/**
+ * Billing health for admins (read access): is Razorpay connected, are webhooks
+ * arriving and being processed, are paid orders getting stuck, and is the
+ * hourly reconciliation running. Read-only. Returns counts, timestamps,
+ * Razorpay ids and yes/no flags; never secrets, payloads or contact details.
+ */
+export async function getBillingHealth(deps: AdminDeps, ctx: AdminContext): Promise<AdminBillingHealth> {
+  void ctx; // Required like every admin service: only a verified admin session can call this. Read access is enough.
+  const [last, counts, unpaid, recent, run] = await Promise.all([
+    deps.db.query<{ eventType: string; processedAt: Date | string; outcome: string | null }>(
+      `select event_type as "eventType", processed_at as "processedAt", outcome
+         from public.billing_webhook_events where processed_at is not null order by processed_at desc limit 1`,
+    ),
+    deps.db.query<{ pending: number; failed: number; oldest: Date | string | null }>(
+      `select count(*) filter (where last_error is null)::int as pending,
+              count(*) filter (where last_error is not null)::int as failed,
+              min(received_at) as oldest
+         from public.billing_webhook_events where processed_at is null`,
+    ),
+    deps.db.query<{ older: number; recent: number }>(
+      `select count(*)::int as older,
+              count(*) filter (where created_at > now() - interval '72 hours')::int as recent
+         from public.billing_orders where status <> 'paid' and created_at < now() - interval '1 hour'`,
+    ),
+    deps.db.query<{ razorpayOrderId: string; packId: string; amountPaise: number; mode: "test" | "live"; createdAt: Date | string }>(
+      `select razorpay_order_id as "razorpayOrderId", pack_id as "packId", amount_paise::int as "amountPaise", mode, created_at as "createdAt"
+         from public.billing_orders where status <> 'paid' and created_at < now() - interval '1 hour'
+        order by created_at desc limit 10`,
+    ),
+    deps.db
+      .query<{
+        startedAt: Date | string; finishedAt: Date | string; ok: boolean; expiredGrants: number; ordersChecked: number;
+        ordersConfirmed: number; ordersFailed: number; error: string | null;
+      }>(
+        `select started_at as "startedAt", finished_at as "finishedAt", ok, expired_grants as "expiredGrants", orders_checked as "ordersChecked",
+                orders_confirmed as "ordersConfirmed", orders_failed as "ordersFailed", error
+           from public.billing_reconcile_runs order by finished_at desc limit 1`,
+      )
+      .catch((err: unknown) => {
+        if (isMissingTable(err)) return "unavailable" as const;
+        throw err;
+      }),
+  ]);
+
+  const c = counts[0];
+  const u = unpaid[0];
+  return {
+    checkedAt: (deps.now?.() ?? new Date()).toISOString(),
+    paymentsEnabled: deps.paymentsEnabled ?? false,
+    mode: deps.billingMode,
+    webhookSecretConfigured: deps.webhookSecretConfigured ?? false,
+    lastProcessedWebhook: last[0] ? { eventType: last[0].eventType, processedAt: iso(last[0].processedAt)!, outcome: last[0].outcome } : null,
+    webhooks: { pending: c?.pending ?? 0, failed: c?.failed ?? 0, oldestUnprocessedAt: iso(c?.oldest ?? null) },
+    unpaidOrders: {
+      olderThanOneHour: u?.older ?? 0,
+      withinReconcileWindow: u?.recent ?? 0,
+      recent: recent.map((r) => ({ ...r, amountPaise: Number(r.amountPaise), createdAt: iso(r.createdAt)! })),
+    },
+    lastReconcileRun:
+      run === "unavailable"
+        ? "unavailable"
+        : run[0]
+          ? { ...run[0], startedAt: iso(run[0].startedAt)!, finishedAt: iso(run[0].finishedAt)! }
+          : null,
   };
 }
 

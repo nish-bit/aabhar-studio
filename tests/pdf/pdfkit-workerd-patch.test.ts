@@ -86,7 +86,11 @@ describe("pdfkit workerd patch (installed copy)", () => {
     const scripts = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts as Record<string, string>;
     expect(scripts.postinstall).toContain("scripts/patch-pdfkit-workerd.mjs");
     for (const s of ["deploy", "preview", "upload"]) {
-      expect(scripts[s], s).toMatch(/^node scripts\/patch-pdfkit-workerd\.mjs && /);
+      // deploy/upload start with scripts/deploy-guard.mjs; the patch must still run before the build.
+      const steps = scripts[s]!.split("&&").map((x) => x.trim());
+      const patch = steps.indexOf("node scripts/patch-pdfkit-workerd.mjs");
+      expect(patch, s).toBeGreaterThanOrEqual(0);
+      expect(patch, s).toBeLessThan(steps.indexOf("opennextjs-cloudflare build"));
     }
   });
 });

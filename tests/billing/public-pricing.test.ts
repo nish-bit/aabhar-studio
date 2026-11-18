@@ -95,15 +95,51 @@ describe("getPublicPricing", () => {
       expect(state.reads).toBe(1);
     });
 
-    it("reads again once the entry expires", async () => {
+    it("once the entry expires, serves it at once and refreshes it in the background for the next render", async () => {
       state.admin = goodDb(123);
       await getPublicPricing();
       state.admin = goodDb(456);
       vi.advanceTimersByTime(PRICING_CACHE_TTL_MS);
       const r = await getPublicPricing();
-      expect(r.source).toBe("database");
-      expect(starterCredits(r)).toBe(456);
+      expect(r.source).toBe("stale");
+      expect(starterCredits(r)).toBe(123);
+      expect(state.reads).toBe(2); // the background refresh started
+      await vi.advanceTimersByTimeAsync(0); // let it finish
+      const next = await getPublicPricing();
+      expect(next.source).toBe("cache");
+      expect(starterCredits(next)).toBe(456);
       expect(state.reads).toBe(2);
+    });
+
+    it("after expiry, a slow database never makes a render wait, and one timeout means no retry for a while", async () => {
+      state.admin = goodDb(123);
+      await getPublicPricing();
+      const never = () => new Promise<Reply>(() => {});
+      state.admin = { plans: never, settings: never };
+      vi.advanceTimersByTime(PRICING_CACHE_TTL_MS);
+      const firstReadSignals = state.signals.length;
+
+      // Answers immediately (no timer advanced) with the last good overrides.
+      const r = await getPublicPricing();
+      expect(r.source).toBe("stale");
+      expect(starterCredits(r)).toBe(123);
+      expect(r.pricing.plans.map((p) => p.pricePaise.monthly)).toEqual(configPrices());
+
+      // The background read times out, is cancelled and logged once.
+      await vi.advanceTimersByTimeAsync(DB_BUDGET_MS);
+      const backgroundSignals = state.signals.slice(firstReadSignals);
+      expect(backgroundSignals.length).toBeGreaterThan(0);
+      expect(backgroundSignals.every((s) => s.aborted)).toBe(true);
+      expect(vi.mocked(console.error).mock.calls.filter((c) => String(c[0]).includes("pricing.overrides_unavailable"))).toHaveLength(1);
+
+      // No new read until the retry window passes; renders keep getting the last good overrides.
+      const reads = state.reads;
+      expect((await getPublicPricing()).source).toBe("stale");
+      expect(state.reads).toBe(reads);
+      vi.advanceTimersByTime(PRICING_RETRY_AFTER_FAILURE_MS);
+      state.admin = goodDb(456);
+      expect((await getPublicPricing()).source).toBe("stale");
+      expect(state.reads).toBe(reads + 1);
     });
 
     it("shares one read between concurrent renders", async () => {
@@ -173,6 +209,42 @@ describe("getPublicPricing", () => {
       const tooOld = await getPublicPricing();
       expect(tooOld.source).toBe("config");
       expect(starterCredits(tooOld)).toBe(billingConfig.plans[1]!.monthlyCredits);
+    });
+
+    it("logs a failed read once, however many renders were waiting for it", async () => {
+      state.admin = { plans: () => Promise.reject(new Error("ECONNREFUSED")), settings: () => ok(null) };
+      const results = await Promise.all([getPublicPricing(), getPublicPricing(), getPublicPricing()]);
+      expect(results.map((r) => r.source)).toEqual(["config", "config", "config"]);
+      expect(state.reads).toBe(1);
+      expect(vi.mocked(console.error).mock.calls.filter((c) => String(c[0]).includes("pricing.overrides_unavailable"))).toHaveLength(1);
+    });
+
+    it("unavailable database (Postgres path): config prices and allowances, logged, no retry storm", async () => {
+      let queries = 0;
+      state.db = {
+        query: () => {
+          queries++;
+          return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:5432"));
+        },
+      };
+      const r = await getPublicPricing();
+      expect(r.source).toBe("config");
+      expect(r.pricing.plans.map((p) => p.pricePaise.monthly)).toEqual(configPrices());
+      expect(starterCredits(r)).toBe(billingConfig.plans[1]!.monthlyCredits);
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining("ECONNREFUSED"));
+      const before = queries;
+      await getPublicPricing();
+      expect(queries).toBe(before); // inside the retry window: no new attempt
+    });
+
+    it("unavailable database (Postgres path) times out after the budget too", async () => {
+      state.db = { query: () => new Promise<unknown[]>(() => {}) };
+      const pending = getPublicPricing();
+      await vi.advanceTimersByTimeAsync(DB_BUDGET_MS);
+      const r = await pending;
+      expect(r.source).toBe("config");
+      expect(r.pricing.plans.map((p) => p.pricePaise.monthly)).toEqual(configPrices());
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`took over ${DB_BUDGET_MS}ms`));
     });
 
     it("falls back on an API error and logs it", async () => {

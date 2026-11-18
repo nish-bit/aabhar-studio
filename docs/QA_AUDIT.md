@@ -2,6 +2,13 @@
 
 **Date:** 20 October 2026 · **Commit:** see git log (`Pre-launch audit fixes…`)
 
+> **Historical record.** This audit describes the project as it was on
+> 20 October 2026, when Vercel was the planned host. Production now runs on
+> Cloudflare Workers (`docs/DEPLOYMENT.md` §3), and Vercel isn't used
+> (§11). Items about Vercel are marked *historical* below. On 16 November
+> 2026 the references to `docs/DEPLOYMENT.md` were updated to its current
+> section numbers. The findings themselves are unchanged.
+
 ## How to read this
 
 Every result below is one of:
@@ -82,7 +89,7 @@ Also verified by hand in this audit:
 |---|---|---|---|
 | 1 | **Launch blocker** | Privacy, Terms, Refunds and Contact pages are **drafts** with placeholders (legal name, address, emails, grievance officer, refund policy, governing law). Razorpay's live activation reviews these pages | You supply the details; a lawyer reviews them |
 | 2 | **Launch blocker** | Supabase's default email delivers only to team addresses, 2 per hour, so customers can't sign up | Configure custom SMTP (`docs/DEPLOYMENT.md` §2) |
-| 3 | **Launch blocker** | `vercel.json` crons run every 10 minutes and hourly; **Vercel Hobby rejects the deployment** | Vercel Pro |
+| 3 | **Launch blocker** | `vercel.json` crons run every 10 minutes and hourly; **Vercel Hobby rejects the deployment** | Vercel Pro. *Historical: Vercel isn't used; the crons are Cloudflare Cron Triggers (`docs/DEPLOYMENT.md` §3.4)* |
 | 4 | High | Pricing, GST treatment and seller details on receipts are unapproved (from the billing phase) | Your approval (`docs/BILLING.md` §1) |
 | 5 | Medium | The CSP allows `*.razorpay.com`; Razorpay doesn't publish an exact list | Confirm Checkout works in the sandbox run |
 | 6 | Medium | Supabase session cookies are readable by page JavaScript (the browser client needs this), so an XSS bug would expose sessions | Mitigated by the CSP, no `dangerouslySetInnerHTML`, and React escaping. Keep the CSP; consider admin MFA |
@@ -95,7 +102,7 @@ Also verified by hand in this audit:
 
 | Area | Why it couldn't run | How to test |
 |---|---|---|
-| Registration, login and logout with real email codes | No Supabase project or SMTP | Smoke test step 2 (`docs/DEPLOYMENT.md` §8) in staging. The login UI renders, and the code paths and redirect safety are tested |
+| Registration, login and logout with real email codes | No Supabase project or SMTP | Smoke test step 2 (`docs/DEPLOYMENT.md` §9) in staging. The login UI renders, and the code paths and redirect safety are tested |
 | Password recovery | **Not applicable**: sign-in is passwordless (email code). There's no password to recover; "lost access" means the email account | — |
 | Supabase Auth rate limits, OTP expiry and email template | Configuration lives in the Supabase dashboard | Deployment §2 |
 | Real AI generation success and failure against OpenAI | No API key. The adapter is tested against a mocked HTTP endpoint for success, 4xx/5xx, timeouts, rate limits and invalid output | One real staging generation, plus one with an invalid key (expect `auth`, no credit loss) |
@@ -103,7 +110,7 @@ Also verified by hand in this audit:
 | Large PDF previews redirecting to Supabase Storage inside the preview frame | Needs real storage; depends on Supabase allowing framing | Preview a 100-product catalogue in staging |
 | Supabase Storage policies on the real platform | Tested against a faithful stub of `storage.objects` with the real policies; not on Supabase itself | `scripts/verify-database.sql` checks the buckets; a cross-account signed-URL attempt in staging |
 | Razorpay Checkout, webhooks and subscription lifecycle against the real sandbox | No keys. Lifecycle tested with a fake gateway using real HMAC signatures and real SQL | `docs/BILLING.md` §4 checklist |
-| GitHub CI, Vercel deployment, domain, HTTPS, cron delivery | No accounts | Deployment §1–§3; the CI workflow is included but hasn't run on GitHub |
+| GitHub CI, Vercel deployment, domain, HTTPS, cron delivery | No accounts | Deployment §1–§3; the CI workflow is included but hasn't run on GitHub. *Historical: deployment is now Cloudflare Workers (§3, domain §3.5, crons §3.4)* |
 | Load or performance under many users | Out of scope here | k6 against staging, per Supabase's production checklist |
 | Screen-reader walkthrough | Only automated checks were run (landmarks, `h1`, alt text, focus) | Manual pass with NVDA or VoiceOver |
 
@@ -129,8 +136,9 @@ Each step depends on the ones before it.
 5. **Vercel Pro project:** connect the repository and set Preview
    environment variables (staging Supabase, OpenAI, Razorpay **test**,
    `CRON_SECRET`, `BILLING_LIVE_APPROVED=false`). Set the region to match
-   Supabase. Protect previews.
-6. **Staging smoke test** (`docs/DEPLOYMENT.md` §8), including one real AI
+   Supabase. Protect previews. *Historical: Vercel isn't used. Workers
+   Builds and Previews are in `docs/DEPLOYMENT.md` §3.1 and §4.*
+6. **Staging smoke test** (`docs/DEPLOYMENT.md` §9), including one real AI
    generation that you review for fidelity.
 7. **Payments sandbox:**
    - `npm run billing:sync -- --apply` with test keys
@@ -140,7 +148,7 @@ Each step depends on the ones before it.
 8. **Admin:** grant yourself `admin` (`npm run admin:role`), enable MFA,
    and check `/admin` as admin and as a customer.
 9. **Monitoring:** set up a log drain or Sentry, alerts on the events in
-   `docs/DEPLOYMENT.md` §7, and an uptime check on `/api/health`.
+   `docs/DEPLOYMENT.md` §8, and an uptime check on `/api/health`.
 10. **Supabase production project:**
     - migrations and the verify script
     - point-in-time recovery, SSL enforcement, auth settings as in staging
@@ -162,4 +170,6 @@ Each step depends on the ones before it.
     noted in the README.
 15. **First week after launch:** watch `/admin/errors`, the webhook
     failures, provider cost, and the `request.error` logs daily. Confirm
-    the three crons run (Vercel → Crons).
+    the three crons run (Vercel → Crons). *Historical: on Workers, check
+    Settings → Triggers and the `cron.failed` logs (`docs/DEPLOYMENT.md`
+    §3.4).*

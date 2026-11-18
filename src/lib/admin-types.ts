@@ -134,6 +134,44 @@ export interface AdminWebhookRow {
   summary: { paymentId: string | null; subscriptionId: string | null; refundId: string | null; amountPaise: number | null; status: string | null };
 }
 
+/** Admin-only billing health. Counts, timestamps, Razorpay ids and yes/no flags; never secrets or customer contact details. */
+export interface AdminBillingHealth {
+  checkedAt: string;
+  /** Razorpay keys are present and allowed in this mode (live keys need BILLING_LIVE_APPROVED). */
+  paymentsEnabled: boolean;
+  mode: "test" | "live" | null;
+  webhookSecretConfigured: boolean;
+  lastProcessedWebhook: { eventType: string; processedAt: string; outcome: string | null } | null;
+  webhooks: {
+    /** Received, not processed, no error yet (in flight, or Razorpay will retry). */
+    pending: number;
+    /** Received, not processed, last attempt failed. */
+    failed: number;
+    oldestUnprocessedAt: string | null;
+  };
+  unpaidOrders: {
+    /** Unpaid orders created more than an hour ago (most are abandoned checkouts). */
+    olderThanOneHour: number;
+    /** Of those, the ones reconciliation still checks with Razorpay (younger than 72 hours). */
+    withinReconcileWindow: number;
+    recent: { razorpayOrderId: string; packId: string; amountPaise: number; mode: "test" | "live"; createdAt: string }[];
+  };
+  /** null when no run has been recorded yet; "unavailable" when the run history table doesn't exist yet. */
+  lastReconcileRun:
+    | {
+        startedAt: string;
+        finishedAt: string;
+        ok: boolean;
+        expiredGrants: number;
+        ordersChecked: number;
+        ordersConfirmed: number;
+        ordersFailed: number;
+        error: string | null;
+      }
+    | null
+    | "unavailable";
+}
+
 export interface AdminLedgerRow {
   id: string;
   createdAt: string;

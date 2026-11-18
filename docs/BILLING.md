@@ -251,11 +251,113 @@ Files: `src/config/billing.ts` · `src/server/billing/*` ·
 `src/app/api/cron/billing` · `src/features/billing/*` ·
 `src/components/billing/*` · `src/app/(marketing)/pricing` ·
 `src/app/(app)/app/billing` · `supabase/migrations/20261020000250_*`,
-`…0300_billing.sql` · `scripts/billing-sync.ts` · `tests/billing/*`.
+`…0300_billing.sql`, `…20261115000100_billing_reconcile_runs.sql` ·
+`scripts/billing-sync.ts` · `src/server/admin/billing.ts` (health) ·
+`src/app/admin/billing` · `tests/billing/*` ·
+`tests/pg/refund-and-first-purchase-races.test.ts`.
 
 ---
 
-## 6. Going live (only after your approval)
+## 6. Operations and monitoring
+
+### Admin Billing Health tab
+
+**Admin → Payments → Health** (`/admin/billing?tab=health`, or
+`GET /api/admin/billing-health`) needs admin or support (read) access. It
+shows only counts, timestamps, Razorpay ids and yes/no flags. It never shows
+secrets, webhook payloads or customer contact details.
+
+| Shows | Look into it when |
+|---|---|
+| Payments enabled, mode (test/live) | Not what you expect. Live keys stay disabled until `BILLING_LIVE_APPROVED=true`. |
+| Webhook secret configured (yes/no) | It says **No**. Webhooks then answer 503 and Razorpay keeps retrying. |
+| Last processed webhook (type, time, outcome) | Nothing new for longer than your normal gap between purchases. Check the webhook URL and secret in the Razorpay Dashboard. |
+| Webhooks failing / not processed yet, oldest received | **Failing** is above 0, or anything stays unprocessed for more than a few minutes. The **Webhook events** tab shows each event's last error. |
+| Unpaid orders older than one hour, of which still reconciled (under 72 h) | A sudden rise: checkout or capture may be failing. Most unpaid orders are abandoned checkouts. |
+| Last reconciliation run (time, result, counts) | It's more than about 2 hours old (the cron isn't running), or the result is "Problems". |
+
+### Reconciliation run history (migration)
+
+`supabase/migrations/20261115000100_billing_reconcile_runs.sql` adds
+`public.billing_reconcile_runs`. Each hourly run of `/api/cron/billing`
+(`reconcileBilling`) records one row there: when it ran, whether it
+succeeded, lapsed credit lots expired, unpaid orders checked, confirmed and
+failed, and a scrubbed error. Rows are kept for 90 days.
+
+- It's additive (one table and an index). Only the server can access it:
+  RLS is on with no policies, and `anon`/`authenticated` have no
+  privileges.
+- **Before it's applied**, reconciliation still runs normally. Only the
+  recording fails: the Health tab says the run history is unavailable, and
+  each run logs `billing.reconcile_run_not_recorded` at warn level.
+- Apply it the same way as every other migration, after review. Rollback:
+  `drop table if exists public.billing_reconcile_runs;`.
+
+### Billing log levels and recommended alerts
+
+Billing logs are one JSON line each: `{"event": "billing.…", "level": …, …}`.
+Values are scrubbed (no connection strings, email addresses or
+key/token-shaped strings) and carry only Razorpay ids, amounts and outcomes.
+When a line concerns a Razorpay webhook, the Razorpay event name is in
+`eventType` (for example `payment.captured`); `event` is always the billing
+event.
+
+**Error level** (`console.error`). Alert on each of these: in Workers Logs,
+`level = "error"` and `event` starting with `billing.`.
+
+| Event | Meaning | What to do |
+|---|---|---|
+| `billing.pack_payment_mismatch` | A payment's order, amount or currency didn't match our order. No credits were given. | Check the payment in the Razorpay Dashboard. Refund it if money was taken. |
+| `billing.subscription_amount_mismatch` | A subscription charge didn't match the plan price. No credits were given. | Same as above. Check the Razorpay Plan with `billing:sync`. |
+| `billing.first_purchase_conflict` | A second first-purchase-only pack (Starter Pack) was paid for. No credits were given. | **Refund it in full by hand** (see below). |
+| `billing.refund_shortfall` | A refund couldn't take back all its credits because they were already spent. | Review the shortfall and decide whether to follow up. |
+| `billing.webhook_failed` | A webhook errored while processing. Razorpay retries it. | Check the event's last error in the **Webhook events** tab. Repeated failures need a fix. |
+| `billing.webhook_bad_signature` | A webhook arrived with an invalid signature. | Repeated hits: the secret doesn't match, or someone is sending forged requests. |
+| `billing.webhook_unhandled` | The webhook route itself failed unexpectedly. | Investigate. |
+| `billing.bad_checkout_signature` | A Checkout callback had a forged or corrupted signature. | Repeated hits from one shop: look into it. |
+| `billing.reconcile_order_failed`, `billing.reconcile_failed` | Reconciliation couldn't check an order, or a whole run failed. | Check that Razorpay and the database are reachable. |
+| `billing.invalid_pack_amount`, `billing.unknown_razorpay_plan` | The configuration would make a payment wrong. | Fix the config or run `billing:sync`. |
+
+**Warn level**: transient or configuration problems (`verify_deferred`,
+`order_create_failed`, `subscription_create_failed`, `cancel_failed`,
+`plan_not_purchasable`, `pack_not_purchasable`, `reconcile_run_not_recorded`,
+and `webhook_rejected` for bodies over 512 KiB, a malformed `Content-Length`
+or invalid UTF-8). Watch these for trends. Everything else is info.
+
+### Manual refunds: `billing.first_purchase_conflict`
+
+The Starter Pack can be bought only as a shop's first pack. That's checked
+when the order is created and again when credits are granted. So if a
+customer opened two orders before paying, or bought another pack while a
+Starter order was still open, only one is credited. The other payment is:
+
+- kept as **captured, 0 credits** (Admin → Payments shows it);
+- its order is marked paid, so reconciliation stops retrying it;
+- shown to the customer as: "The Starter Pack is only for your first
+  purchase, so no credits were added for this payment. We'll refund it in
+  full."
+
+Nothing is refunded automatically. For each alert:
+
+1. Look up the payment (`payment` in the log line) in Admin → Payments.
+   Confirm it shows captured with 0 credits.
+2. In the Razorpay Dashboard, refund that payment **in full**.
+3. The `refund.processed` webhook records the refund. With 0 credits
+   granted, nothing is taken back.
+4. Optionally, let the customer know the refund is on its way.
+
+### Refunds in general
+
+Refunds are started in the Razorpay Dashboard. When `refund.processed`
+arrives, the payment row is locked and the matching share of its credits is
+taken back. That share is based on the refunds actually processed, so
+partial refunds arriving at the same time, or one refund delivered twice,
+never take back more than the refunded share. Credits already spent are
+recorded as a shortfall (`billing.refund_shortfall`).
+
+---
+
+## 7. Going live (only after your approval)
 
 1. Approve prices, GST treatment, trial, limits and refund policy. Set
    `pricesApproved: true` and fill in `receipts.seller`.
@@ -266,9 +368,11 @@ Files: `src/config/billing.ts` · `src/server/billing/*` ·
 5. Set the live env vars in production and `BILLING_LIVE_APPROVED=true`.
 6. `npm run billing:sync -- --apply` with the live keys. This creates the
    live Razorpay Plans; test and live prices are stored separately.
-7. Do one small real purchase, then refund it.
+7. Apply the reconciliation migration and set up the error-level alerts in
+   §6, then check that the Health tab shows a recent successful run.
+8. Do one small real purchase, then refund it.
 
-## 7. Known limitations
+## 8. Known limitations
 
 - Plan changes take effect at renewal only. There are no mid-cycle upgrades
   with proration.

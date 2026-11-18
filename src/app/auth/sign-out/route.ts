@@ -13,11 +13,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: { code: "forbidden", message: "Forbidden" } }, { status: 403 });
   }
 
-  const supabase = await supabaseForRequest();
-  const result = supabase ? await supabase.auth.signOut() : null;
-
   const res = NextResponse.redirect(new URL("/", req.url), { status: 303 });
   res.headers.set("Cache-Control", "no-store");
+
+  // Idempotent: a repeated sign-out (double submit, Back + resubmit, second tab) has no session
+  // cookies left, so there is nothing to end. Skip the Supabase call and just go home.
+  if (sessionCookieNames(req).length === 0) return res;
+
+  const supabase = await supabaseForRequest();
+  const result = supabase ? await supabase.auth.signOut() : null;
 
   if (result?.error) {
     // Supabase keeps the cookies when it can't even load the session (e.g. a
@@ -29,10 +33,19 @@ export async function POST(req: Request) {
   return res;
 }
 
-/** Supabase session cookies (`sb-<project>-auth-token`, its `.0`/`.1` chunks and the PKCE verifier). */
+/**
+ * Supabase Auth cookie names, as @supabase/ssr writes them. The storage key is
+ * `sb-<first label of the Supabase hostname>-auth-token` (the label can contain
+ * hyphens with a custom domain); a large session is split into `<key>.0`, `<key>.1`, …;
+ * sign-in adds `<key>-code-verifier`, `<key>-flows-code-verifier` and
+ * `<key>-flow-<id>-code-verifier`.
+ */
+const SUPABASE_AUTH_COOKIE = /^sb-[A-Za-z0-9-]+-auth-token(?:\.\d+|-code-verifier|-flows-code-verifier|-flow-[A-Za-z0-9_-]{8,64}-code-verifier)?$/;
+
+/** Names of the Supabase Auth cookies this request carries (names only; values are never read). */
 function sessionCookieNames(req: Request): string[] {
   return (req.headers.get("cookie") ?? "")
     .split(";")
-    .map((part) => part.trim().split("=")[0] ?? "")
-    .filter((name) => /^sb-[a-z0-9]+-auth-token/.test(name));
+    .map((part) => part.trim().split("=")[0]?.trim() ?? "")
+    .filter((name) => SUPABASE_AUTH_COOKIE.test(name));
 }

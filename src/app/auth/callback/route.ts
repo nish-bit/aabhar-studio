@@ -36,9 +36,20 @@ export async function GET(req: Request) {
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
+    // Classified by Supabase's error code only, never by message text: a code/verifier mismatch
+    // (bad_code_verifier) mentions "verifier" but is a failed sign-in, not an expired one.
+    const expired = typeof error.code === "string" && EXPIRED_FLOW_CODES.has(error.code);
+    // The same callback URL opened twice (a reload, Back, or a duplicate request) finds its code and
+    // verifier already used by the first, successful exchange. If this browser is signed in, that
+    // sign-in worked: continue instead of showing "link expired". Only the expired-flow codes
+    // qualify. No session is created here: the exchange failed, and getUser() only verifies the
+    // session this browser's own cookies already hold.
+    if (expired && (await hasVerifiedSession(supabase))) {
+      log("auth.oauth_code_already_used", { code: error.code ?? null });
+      return NextResponse.redirect(new URL(next, url.origin), { status: 303 });
+    }
     log("auth.oauth_exchange_failed", { code: error.code ?? null, status: error.status ?? null });
-    // A missing PKCE verifier means the flow was started in another browser or the cookie expired.
-    return back(error.code === "flow_state_not_found" || error.code === "flow_state_expired" || /verifier/i.test(error.message) ? "expired" : "failed");
+    return back(expired ? "expired" : "failed");
   }
   const user = data?.user ?? data?.session?.user ?? null;
   await ensureShop(user?.id ?? null);
@@ -53,6 +64,24 @@ export async function GET(req: Request) {
     res.cookies.set(SIGNUP_CONSENT_COOKIE, "", { path: "/auth/callback", maxAge: 0 });
   }
   return res;
+}
+
+/**
+ * Exchange errors meaning the sign-in flow is used up or expired: Supabase has no flow state for the
+ * code (already exchanged, or too old), or this browser has no PKCE verifier cookie (consumed by an
+ * earlier exchange, or the flow started in another browser). These show "expired", and only these
+ * may continue with an existing, verified session.
+ */
+const EXPIRED_FLOW_CODES: ReadonlySet<string> = new Set(["flow_state_not_found", "flow_state_expired", "pkce_code_verifier_not_found"]);
+
+/** True only when Supabase confirms this browser's existing session; any error counts as no session. */
+async function hasVerifiedSession(supabase: NonNullable<Awaited<ReturnType<typeof supabaseForRequest>>>): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    return !error && !!data?.user;
+  } catch {
+    return false;
+  }
 }
 
 /**
