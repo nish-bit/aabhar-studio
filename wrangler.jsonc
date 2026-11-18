@@ -16,8 +16,8 @@
   "vars": {
     "NEXT_PUBLIC_SUPABASE_URL": "https://eguuncnkcjqmeatrpzcj.supabase.co",
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_l6NnIvtSOxTWgx48GaU7VA_ZE92nE5s",
-    // Live Razorpay stays off until a reviewed commit changes this.
-    "BILLING_LIVE_APPROVED": "false"
+    // Approved for controlled live checkout testing; keep in sync with Cloudflare Production.
+    "BILLING_LIVE_APPROVED": "true"
   },
   "assets": {
     "directory": ".open-next/assets",
